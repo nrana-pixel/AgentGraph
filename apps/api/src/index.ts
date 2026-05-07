@@ -9,6 +9,8 @@ import ingestRouter from "./routes/ingest.js";
 import tracesRouter from "./routes/traces.js";
 import toolsRouter from "./routes/tools.js";
 import webhooksRouter from "./routes/webhooks.js";
+import projectsRouter from "./routes/projects.js";
+import usersRouter from "./routes/users.js";
 
 const app = express();
 const PORT = parseInt(process.env["PORT"] ?? "3001", 10);
@@ -35,7 +37,9 @@ app.use("/v1/auth", authRouter);
 app.use("/v1/ingest", ingestRouter);
 app.use("/v1/traces", tracesRouter);
 app.use("/v1/tools", toolsRouter);
+app.use("/v1/projects", projectsRouter);
 app.use("/v1/projects", webhooksRouter);
+app.use("/v1/users", usersRouter);
 
 // --- Error handler (must be last) ---
 app.use(errorHandler);
