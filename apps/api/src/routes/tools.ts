@@ -69,7 +69,12 @@ router.get(
     }
 
     const { page, limit } = parsed.data;
-    const category = req.query["category"] as string | undefined;
+    const rawCategory = req.query["category"];
+    if (rawCategory !== undefined && typeof rawCategory !== "string") {
+      res.status(400).json({ error: "validation_error", message: "category must be a single string value" });
+      return;
+    }
+    const category = rawCategory;
 
     let query = db
       .select({

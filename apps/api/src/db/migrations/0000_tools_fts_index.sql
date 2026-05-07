@@ -1,6 +1,8 @@
 -- Create GIN index for full-text search on the tools table.
 -- Speeds up the plainto_tsquery / to_tsvector queries in the recommendation engine.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tools_fts
+-- Note: CONCURRENTLY omitted — Drizzle's migrator wraps migrations in a transaction,
+-- and CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
+CREATE INDEX IF NOT EXISTS idx_tools_fts
   ON tools
   USING gin (
     to_tsvector(

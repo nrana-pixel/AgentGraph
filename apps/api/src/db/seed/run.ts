@@ -18,6 +18,10 @@ async function seed() {
   console.log(`[seed] upserting ${SEED_TOOLS.length} tools…`);
 
   for (const tool of SEED_TOOLS) {
+    // Build proper Postgres ARRAY[...] expressions — JSON strings are not valid text[] literals
+    const residencyArr = sql`ARRAY[${sql.join(tool.dataResidency.map((r) => sql`${r}`), sql`, `)}]::text[]`;
+    const tagsArr = sql`ARRAY[${sql.join(tool.tags.map((t) => sql`${t}`), sql`, `)}]::text[]`;
+
     // Upsert tool row — keep existing data_source if already graduated to telemetry
     await db.execute(sql`
       INSERT INTO tools (
@@ -31,7 +35,7 @@ async function seed() {
         ${tool.slug}, ${tool.name}, ${tool.description}, ${tool.category},
         ${tool.website}, ${tool.docsUrl}, ${tool.githubUrl},
         ${tool.isOpenSource}, ${tool.isSelfHostable}, ${tool.pricingModel},
-        ${JSON.stringify(tool.dataResidency)}::text[], ${JSON.stringify(tool.tags)}::text[],
+        ${residencyArr}, ${tagsArr},
         ${tool.sentimentScore}, 'seeded',
         NOW(), NOW()
       )
