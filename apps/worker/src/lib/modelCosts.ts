@@ -52,12 +52,14 @@ export function computeCost(
   promptTokens: number,
   completionTokens: number,
 ): number | null {
-  // Try exact match first, then prefix match for versioned model names
+  // Try exact match first, then longest-prefix match for versioned model names.
+  // Sorting by descending key length ensures "gpt-4o-mini" beats "gpt-4o"
+  // when the model string is e.g. "gpt-4o-mini-2026-05".
   const pricing =
     MODEL_COSTS[model] ??
-    Object.entries(MODEL_COSTS).find(([key]) =>
-      model.startsWith(key),
-    )?.[1];
+    Object.entries(MODEL_COSTS)
+      .sort((a, b) => b[0].length - a[0].length)
+      .find(([key]) => model.startsWith(key))?.[1];
 
   if (!pricing) return null;
 

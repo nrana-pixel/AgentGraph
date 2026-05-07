@@ -3,6 +3,7 @@ import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { traces, traceSteps, projects, organizations, apiKeys } from "../db/schema.js";
 import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
+import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { CreateProjectSchema, CreateApiKeySchema } from "@agentgraph/types";
 import bcrypt from "bcrypt";
@@ -12,28 +13,42 @@ import { v4 as uuidv4 } from "uuid";
 const router = Router();
 
 // POST /v1/projects — create a new project
+// Uses Clerk session auth (not apiKeyAuth) so new orgs can bootstrap
+// without a pre-existing project API key.
 router.post(
   "/",
   rateLimiter,
-  apiKeyAuth,
+  clerkSessionAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const authed = req as AuthedRequest;
+    const authed = req as ClerkAuthedRequest;
+
+    if (!authed.dbOrgId) {
+      res.status(400).json({
+        error: "no_active_org",
+        message:
+          "Set an active Clerk organization in your session before creating a project.",
+      });
+      return;
+    }
+
     const parsed = CreateProjectSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "validation_error" });
       return;
     }
 
-    const slug = parsed.data.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "")
-      .slice(0, 60)
-      + "-" + randomBytes(3).toString("hex");
+    const slug =
+      parsed.data.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)/g, "")
+        .slice(0, 60) +
+      "-" +
+      randomBytes(3).toString("hex");
 
     const [project] = await db
       .insert(projects)
-      .values({ orgId: authed.orgId, name: parsed.data.name, slug })
+      .values({ orgId: authed.dbOrgId, name: parsed.data.name, slug })
       .returning();
 
     res.status(201).json(project);
@@ -58,6 +73,19 @@ router.get(
     const toParam = req.query["to"] as string | undefined;
     const from = fromParam ? new Date(fromParam) : new Date(Date.now() - 30 * 86400_000);
     const to = toParam ? new Date(toParam) : new Date();
+
+    if (Number.isNaN(from.getTime())) {
+      res.status(400).json({ error: "invalid_param", message: "from is not a valid date" });
+      return;
+    }
+    if (Number.isNaN(to.getTime())) {
+      res.status(400).json({ error: "invalid_param", message: "to is not a valid date" });
+      return;
+    }
+    if (from > to) {
+      res.status(400).json({ error: "invalid_param", message: "from must be before to" });
+      return;
+    }
 
     // Daily trace counts + cost + tokens
     const dailyStats = await db
@@ -221,22 +249,6 @@ router.delete(
     }
 
     res.json({ revoked: true });
-  },
-);
-
-// DELETE /v1/users/me — GDPR account deletion
-router.delete(
-  "/users/me",
-  rateLimiter,
-  apiKeyAuth,
-  async (_req: Request, res: Response): Promise<void> => {
-    // Full cascade handled by FK ON DELETE CASCADE in schema
-    // The actual user deletion triggers via Clerk webhook (user.deleted event)
-    // which cascades through orgs → projects → traces
-    res.json({
-      message:
-        "Account deletion initiated. All project data will be removed within 24 hours.",
-    });
   },
 );
 

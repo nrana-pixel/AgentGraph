@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -15,7 +16,7 @@ const NAV_ITEMS = [
 export default async function DashboardLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const { userId } = await auth();
   if (!userId) redirect("/sign-in");

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { auth } from "@clerk/nextjs/server";
 import { WaterfallTimeline } from "../../../../components/traces/WaterfallTimeline.js";
 import { formatDistanceToNow, formatDuration } from "../../../../lib/dateUtils.js";
 
@@ -43,11 +44,16 @@ const STATUS_STYLES: Record<string, string> = {
 
 async function fetchTrace(
   id: string,
+  projectId: string,
+  sessionToken: string,
 ): Promise<{ trace: TraceDetail; steps: TraceStep[] } | null> {
   try {
     const res = await fetch(
-      `${process.env["NEXT_PUBLIC_API_URL"]}/v1/traces/${id}`,
-      { next: { revalidate: 30 } },
+      `${process.env["NEXT_PUBLIC_API_URL"]}/v1/traces/${id}?projectId=${projectId}`,
+      {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        next: { revalidate: 30 },
+      },
     );
     if (res.status === 404) return null;
     if (!res.ok) return null;
@@ -59,11 +65,23 @@ async function fetchTrace(
 
 export default async function TraceDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string>>;
 }) {
-  const { id } = await params;
-  const data = await fetchTrace(id);
+  const [{ id }, sp, { getToken }] = await Promise.all([
+    params,
+    searchParams,
+    auth(),
+  ]);
+
+  const projectId = sp["projectId"] ?? "";
+  const sessionToken = (await getToken()) ?? "";
+
+  if (!projectId) notFound();
+
+  const data = await fetchTrace(id, projectId, sessionToken);
 
   if (!data) notFound();
 
