@@ -7,6 +7,7 @@ import {
   numeric,
   pgTable,
   primaryKey,
+  sql,
   text,
   timestamp,
   uniqueIndex,
@@ -140,25 +141,37 @@ export const traceSteps = pgTable(
 // Tool Intelligence Graph
 // ---------------------------------------------------------------------------
 
-export const tools = pgTable("tools", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  slug: text("slug").unique().notNull(),
-  name: text("name").notNull(),
-  description: text("description"),
-  category: text("category").notNull(), // see ToolCategory enum
-  website: text("website"),
-  docsUrl: text("docs_url"),
-  githubUrl: text("github_url"),
-  isOpenSource: boolean("is_open_source").default(false).notNull(),
-  isSelfHostable: boolean("is_self_hostable").default(false).notNull(),
-  pricingModel: text("pricing_model"), // 'free' | 'freemium' | 'paid' | 'open_source'
-  dataResidency: text("data_residency").array(), // ['EU', 'US', 'APAC']
-  tags: text("tags").array(),
-  dataSource: text("data_source").default("seeded").notNull(), // 'seeded' | 'telemetry' | 'community'
-  sentimentScore: numeric("sentiment_score", { precision: 5, scale: 2 }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
+export const tools = pgTable(
+  "tools",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slug: text("slug").unique().notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    category: text("category").notNull(), // see ToolCategory enum
+    website: text("website"),
+    docsUrl: text("docs_url"),
+    githubUrl: text("github_url"),
+    isOpenSource: boolean("is_open_source").default(false).notNull(),
+    isSelfHostable: boolean("is_self_hostable").default(false).notNull(),
+    pricingModel: text("pricing_model"), // 'free' | 'freemium' | 'paid' | 'open_source'
+    dataResidency: text("data_residency").array(), // ['EU', 'US', 'APAC']
+    tags: text("tags").array(),
+    dataSource: text("data_source").default("seeded").notNull(), // 'seeded' | 'telemetry' | 'community'
+    sentimentScore: numeric("sentiment_score", { precision: 5, scale: 2 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    // GIN index for fast full-text search used by the recommendation engine
+    index("idx_tools_fts").using(
+      "gin",
+      sql`to_tsvector('english', coalesce(${t.name}, '') || ' ' || coalesce(${t.description}, '') || ' ' || coalesce(array_to_string(${t.tags}, ' '), ''))`,
+    ),
+    index("idx_tools_category").on(t.category),
+    index("idx_tools_data_source").on(t.dataSource),
+  ],
+);
 
 export const toolStats = pgTable(
   "tool_stats",
