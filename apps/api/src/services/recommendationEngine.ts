@@ -47,7 +47,7 @@ export async function getRecommendations(
 
   // Full-text search on name + description + tags
   const tsQuery = sql`plainto_tsquery('english', ${task})`;
-  const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(array_to_string(${tools.tags}, ' '), ''))`;
+  const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(immutable_array_to_string(${tools.tags}, ' '), ''))`;
 
   let candidates: ToolWithStats[] = await db
     .select({
@@ -65,7 +65,7 @@ export async function getRecommendations(
       tags: tools.tags,
       dataSource: tools.dataSource,
       sentimentScore: tools.sentimentScore,
-      totalCalls: toolGlobalStats.totalCalls,
+      totalCalls: sql<number>`coalesce(${toolGlobalStats.totalCalls}, 0)`,
       successRate: toolGlobalStats.successRate,
       avgLatencyMs: toolGlobalStats.avgLatencyMs,
       p95LatencyMs: toolGlobalStats.p95LatencyMs,
@@ -99,7 +99,7 @@ export async function getRecommendations(
         tags: tools.tags,
         dataSource: tools.dataSource,
         sentimentScore: tools.sentimentScore,
-        totalCalls: toolGlobalStats.totalCalls,
+        totalCalls: sql<number>`coalesce(${toolGlobalStats.totalCalls}, 0)`,
         successRate: toolGlobalStats.successRate,
         avgLatencyMs: toolGlobalStats.avgLatencyMs,
         p95LatencyMs: toolGlobalStats.p95LatencyMs,

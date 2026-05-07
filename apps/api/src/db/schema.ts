@@ -7,12 +7,12 @@ import {
   numeric,
   pgTable,
   primaryKey,
-  sql,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
 // Users & Auth
@@ -166,7 +166,7 @@ export const tools = pgTable(
     // GIN index for fast full-text search used by the recommendation engine
     index("idx_tools_fts").using(
       "gin",
-      sql`to_tsvector('english', coalesce(${t.name}, '') || ' ' || coalesce(${t.description}, '') || ' ' || coalesce(array_to_string(${t.tags}, ' '), ''))`,
+      sql`to_tsvector('english', coalesce(${t.name}, '') || ' ' || coalesce(${t.description}, '') || ' ' || coalesce(immutable_array_to_string(${t.tags}, ' '), ''))`,
     ),
     index("idx_tools_category").on(t.category),
     index("idx_tools_data_source").on(t.dataSource),

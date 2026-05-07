@@ -43,16 +43,27 @@ async function fetchStats(projectId: string, apiKey: string): Promise<StatsRespo
   }
 }
 
+const EMPTY_STATS: StatsResponse = {
+  totals: {
+    traceCount: 0,
+    totalCostUsd: 0,
+    totalTokens: 0,
+    errorRate: 0,
+  },
+  dailyStats: [],
+  topAgents: [],
+};
+
 export default async function DashboardPage() {
   await auth();
 
   // In Phase 1 we render with placeholder data; real data wires in
   // once the user creates a project and API key via /settings.
-  const stats: StatsResponse | null = null;
+  const stats = EMPTY_STATS;
 
-  const totalTraces = stats?.totals.traceCount ?? 0;
-  const totalCost = stats?.totals.totalCostUsd ?? 0;
-  const errorRate = stats?.totals.errorRate ?? 0;
+  const totalTraces = stats.totals.traceCount;
+  const totalCost = stats.totals.totalCostUsd;
+  const errorRate = stats.totals.errorRate;
 
   return (
     <div className="space-y-6">
@@ -95,7 +106,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Top agents table */}
-      {stats?.topAgents && stats.topAgents.length > 0 ? (
+      {stats.topAgents.length > 0 ? (
         <div>
           <h2 className="mb-3 text-sm font-medium text-muted-foreground uppercase tracking-wide">
             Top Agents
