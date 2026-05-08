@@ -157,9 +157,15 @@ export async function startIngestConsumer(
   }
 }
 
-const COST_SPIKE_THRESHOLD_USD = parseFloat(
-  process.env["COST_SPIKE_THRESHOLD_USD"] ?? "1.00",
-);
+const _rawThreshold = Number(process.env["COST_SPIKE_THRESHOLD_USD"] ?? "1.00");
+if (!Number.isFinite(_rawThreshold) || _rawThreshold < 0) {
+  console.error(
+    `[ingest-consumer] COST_SPIKE_THRESHOLD_USD is invalid ("${process.env["COST_SPIKE_THRESHOLD_USD"]}"), falling back to $1.00`,
+  );
+}
+const COST_SPIKE_THRESHOLD_USD = Number.isFinite(_rawThreshold) && _rawThreshold >= 0
+  ? _rawThreshold
+  : 1.00;
 
 async function fireCostSpikeWebhooks(
   db: PostgresJsDatabase,
@@ -188,24 +194,47 @@ async function fireCostSpikeWebhooks(
     timestamp: new Date().toISOString(),
   });
 
-  await Promise.allSettled(
-    targets
-      .filter((t) => t.events?.includes("cost_spike"))
-      .map(async (target) => {
-        const sig = createHmac("sha256", target.secret)
-          .update(body)
-          .digest("hex");
-        await fetch(target.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-AgentGraph-Signature": `sha256=${sig}`,
-          },
-          body,
-          signal: AbortSignal.timeout(5000),
-        });
-      }),
+  const eligible = targets.filter((t) => {
+    if (!t.events?.includes("cost_spike")) return false;
+    // Defense-in-depth: re-validate scheme even if schema already enforces it
+    try {
+      const parsed = new URL(t.url);
+      if (parsed.protocol !== "https:") {
+        console.warn(`[ingest-consumer] skipping non-https webhook url: ${t.url}`);
+        return false;
+      }
+    } catch {
+      console.warn(`[ingest-consumer] skipping malformed webhook url: ${t.url}`);
+      return false;
+    }
+    return true;
+  });
+
+  const results = await Promise.allSettled(
+    eligible.map(async (target) => {
+      const sig = createHmac("sha256", target.secret)
+        .update(body)
+        .digest("hex");
+      const res = await fetch(target.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-AgentGraph-Signature": `sha256=${sig}`,
+        },
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        console.warn(`[ingest-consumer] webhook ${target.url} returned ${res.status}`);
+      }
+    }),
   );
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error(`[ingest-consumer] webhook delivery failed:`, result.reason);
+    }
+  }
 }
 
 function toTitleCase(slug: string): string {

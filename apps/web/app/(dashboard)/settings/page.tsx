@@ -10,7 +10,6 @@ import { useToast } from "@/components/ui/toast";
 type ApiKey = { id: string; name: string; prefix: string; lastUsed: string; createdAt: string };
 type Webhook = { id: string; url: string; events: string[]; enabled: boolean; createdAt: string };
 
-const PLAN_LIMITS: Record<string, number> = { free: 10_000, pro: 500_000, team: 5_000_000 };
 const PLAN_COLORS: Record<string, string> = { free: "info", pro: "violet", team: "ok" };
 
 const ALL_EVENTS = ["cost_spike", "error_rate_threshold", "trace_completed"];
@@ -73,7 +72,7 @@ export default function SettingsPage() {
 
       {/* Billing card */}
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="hd"><h3>Billing & plan</h3>
+        <div className="hd"><h3>Billing &amp; plan</h3>
           <Badge tone={PLAN_COLORS[BILLING.plan] as "violet" | "ok" | "info"}>{BILLING.plan}</Badge>
         </div>
         <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
