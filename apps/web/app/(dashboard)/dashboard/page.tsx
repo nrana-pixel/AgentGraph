@@ -16,7 +16,7 @@ function StatCard({ label, value, sub, spark, color, delta }: { label: string; v
         {delta && <div className="stat-delta" style={{ color: delta.startsWith("-") ? "var(--error)" : "var(--success)" }}><span>{delta.startsWith("-") ? "↓" : "↑"}</span>{delta.replace(/^[-+]/, "")}</div>}
       </div>
       {sub && <div className="muted-2 mono" style={{ fontSize: 10.5 }}>{sub}</div>}
-      {spark && <div className="stat-spark"><Sparkline values={spark} color={color}/></div>}
+      {spark && <div className="stat-spark"><Sparkline values={spark} {...(color ? { color } : {})}/></div>}
     </div>
   );
 }
@@ -73,6 +73,7 @@ function ActivityChart({ series, hoverIdx, setHoverIdx }: { series: typeof STATS
       })}
       {hoverIdx != null && (() => {
         const d = series[hoverIdx];
+        if (!d) return null;
         const x = pad.l + hoverIdx * stepX;
         return (
           <g transform={`translate(${Math.min(Math.max(x, pad.l + 60), w - pad.r - 60)},${pad.t + 10})`}>
@@ -158,7 +159,7 @@ export default function DashboardPage() {
           </div>
           <div style={{ padding: "8px 14px 14px" }}>
             {stats.topAgents.map(a => {
-              const pct = (a.count / stats.topAgents[0].count) * 100;
+              const pct = (a.count / (stats.topAgents[0]?.count || 1)) * 100;
               return (
                 <div key={a.agentId} style={{ display: "grid", gridTemplateColumns: "1fr auto", padding: "8px 6px", gap: 12, alignItems: "center", borderBottom: "1px solid var(--border)" }}>
                   <div className="col" style={{ gap: 4 }}>

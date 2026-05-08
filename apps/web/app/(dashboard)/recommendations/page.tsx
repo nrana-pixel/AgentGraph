@@ -33,8 +33,8 @@ const HINTS: Record<string, RegExp> = {
 };
 
 function buildReason(t: typeof TOOLS_DATA[0], success: number, latency: number, popularity: number, sentiment: number) {
-  const top = [["high reliability", success], ["low latency", latency], ["broad adoption", popularity], ["positive sentiment", sentiment]]
-    .sort((a, b) => Number(b[1]) - Number(a[1]))[0][0];
+  const top = ([["high reliability", success], ["low latency", latency], ["broad adoption", popularity], ["positive sentiment", sentiment]] as [string, number][])
+    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? "high reliability";
   return `${t.name} ranked highest for "${t.category.replace("_", " ")}" — ${top}, ${fmtPct(t.successRate)} success, ${t.avgLatencyMs}ms p50.`;
 }
 
@@ -180,7 +180,7 @@ export default function RecommendationsPage() {
   const toggleCompare = (rec: Rec) => {
     setCompareItems(prev => {
       if (prev.find(x => x.slug === rec.slug)) return prev.filter(x => x.slug !== rec.slug);
-      if (prev.length >= 3) return [prev[1], prev[2], rec];
+      if (prev.length >= 3) return [...prev.slice(1, 3).filter((x): x is Rec => !!x), rec];
       return [...prev, rec];
     });
   };
@@ -301,13 +301,13 @@ export default function RecommendationsPage() {
                 { key: "successRate", label: "Reliability", fmt: (v: number) => (v * 100).toFixed(2) + "%", max: 1, color: "var(--success)" },
                 { key: "avgLatencyMs", label: "Avg latency", fmt: (v: number) => v + "ms", inverted: true, max: 2000, color: "var(--accent)" },
               ].map(d => {
-                const vals = compareItems.map(r => (r as Record<string, number>)[d.key]);
+                const vals = compareItems.map(r => ((r as unknown as Record<string, number>)[d.key]) ?? 0);
                 const winner = d.inverted ? Math.min(...vals) : Math.max(...vals);
                 return (
                   <React.Fragment key={d.key}>
                     <div className="compare-row-label">{d.label}</div>
                     {compareItems.map(r => {
-                      const v = (r as Record<string, number>)[d.key];
+                      const v = ((r as unknown as Record<string, number>)[d.key]) ?? 0;
                       const isWinner = vals.length > 1 && v === winner;
                       const pct = d.inverted ? Math.max(8, 100 - (v / d.max) * 100) : (v / d.max) * 100;
                       return (

@@ -53,7 +53,7 @@ export function TweaksProvider({ children }: { children: React.ReactNode }) {
     el.setAttribute("data-density", tweaks.density);
     el.setAttribute("data-sidebar", tweaks.sidebar);
     el.setAttribute("data-font", tweaks.font);
-    const pal = ACCENT_PALETTES[tweaks.accent] ?? ACCENT_PALETTES.amber;
+    const pal = ACCENT_PALETTES[tweaks.accent] ?? ACCENT_PALETTES["amber"] ?? { dark: "oklch(75% 0.18 60)", light: "oklch(60% 0.18 60)", fg_d: "#000", fg_l: "#fff" };
     const accent = tweaks.theme === "dark" ? pal.dark : pal.light;
     const fg = tweaks.theme === "dark" ? pal.fg_d : pal.fg_l;
     el.style.setProperty("--accent", accent);

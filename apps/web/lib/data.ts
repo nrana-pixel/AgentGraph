@@ -100,7 +100,7 @@ function mulberry32(seed: number) {
   };
 }
 const rand = mulberry32(42);
-const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)];
+const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)] as T;
 
 export interface Trace {
   id: string;
@@ -218,7 +218,7 @@ export interface TraceStep {
 }
 
 export function makeStepsForTrace(trace: Trace, idx: number): TraceStep[] {
-  const tpl = STEP_TEMPLATES[trace.agentId] || STEP_TEMPLATES["doc-qa"];
+  const tpl = STEP_TEMPLATES[trace.agentId] || STEP_TEMPLATES["doc-qa"] || [];
   const r = mulberry32(idx + 1);
   const errorAt = trace.status === "error" ? Math.floor(r() * tpl.length) : -1;
   let cursor = new Date(trace.startedAt).getTime();
