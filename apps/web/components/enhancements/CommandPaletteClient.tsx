@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { TOOLS_DATA, TRACES_DATA, AGENTS } from "@/lib/data";
 import { ToolIcon } from "@/components/ui/primitives";
 import { IconSearch, IconChev } from "@/components/ui/icons";
-import { useBusEvent, bus } from "@/lib/bus";
+import { useBusEvent } from "@/lib/bus";
 import { useTweaks } from "@/lib/tweaks";
 
 export function CommandPalette() {

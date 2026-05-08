@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { TRACES_DATA, AGENTS } from "@/lib/data";
 import { fmtNum, fmtMs, fmtMoney, relTime } from "@/lib/format";
@@ -21,6 +21,8 @@ export default function TracesPage() {
       if (envFilter && t.env !== envFilter) return false;
       return true;
     }), [agentFilter, statusFilter, envFilter]);
+
+  useEffect(() => setPage(1), [agentFilter, statusFilter, envFilter]);
 
   const paged = filtered.slice((page - 1) * limit, page * limit);
   const totalPages = Math.max(1, Math.ceil(filtered.length / limit));
@@ -94,7 +96,7 @@ export default function TracesPage() {
           </tbody>
         </table>
         <div className="row" style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", justifyContent: "space-between" }}>
-          <span className="mono muted-2" style={{ fontSize: 11 }}>{(page - 1) * limit + 1}–{Math.min(page * limit, filtered.length)} of {filtered.length}</span>
+          <span className="mono muted-2" style={{ fontSize: 11 }}>{filtered.length === 0 ? "0–0 of 0" : `${(page - 1) * limit + 1}–${Math.min(page * limit, filtered.length)} of ${filtered.length}`}</span>
           <div className="row" style={{ gap: 6 }}>
             <button className="btn btn-sm" disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
             <span className="mono" style={{ fontSize: 11 }}>{page} / {totalPages}</span>

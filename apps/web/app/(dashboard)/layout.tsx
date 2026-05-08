@@ -1,8 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Topbar } from "@/components/layout/Topbar";
-import { CommandPalette } from "@/components/enhancements/CommandPalette";
+import { Sidebar } from "@/components/layout/SidebarClient";
+import { Topbar } from "@/components/layout/TopbarClient";
+import { CommandPalette } from "@/components/enhancements/CommandPaletteClient";
 import { TweaksPanel } from "@/components/enhancements/TweaksPanel";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {

@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { IconPanelL, IconSearch } from "@/components/ui/icons";
 import { useTweaks } from "@/lib/tweaks";
 import { useBus } from "@/lib/bus";
