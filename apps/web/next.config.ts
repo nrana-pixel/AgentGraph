@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
-  eslint: { ignoreDuringBuilds: true },
+  transpilePackages: ["@clerk/nextjs", "@clerk/clerk-react", "@clerk/shared"],
 };
 export default nextConfig;
