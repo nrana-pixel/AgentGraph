@@ -1,293 +1,147 @@
-import { auth } from "@clerk/nextjs/server";
+"use client";
+import { useMemo } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { TOOLS_DATA } from "@/lib/data";
+import { fmtMs, fmtPct, fmtNum } from "@/lib/format";
+import { Badge, ToolIcon, Ring } from "@/components/ui/primitives";
+import { IconGlobe, IconBook, IconGithub } from "@/components/ui/icons";
 
-const API_BASE = process.env["NEXT_PUBLIC_API_URL"] ?? "http://localhost:3001";
-
-interface Tool {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  category: string;
-  website: string | null;
-  docsUrl: string | null;
-  githubUrl: string | null;
-  isOpenSource: boolean;
-  isSelfHostable: boolean;
-  pricingModel: string | null;
-  dataResidency: string[] | null;
-  tags: string[] | null;
-  dataSource: string;
-  sentimentScore: string | null;
+function DimensionRow({ label, sub, value, valueLabel, color }: { label: string; sub: string; value: number; valueLabel: string; color: string }) {
+  return (
+    <div className="col" style={{ gap: 6 }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 500, fontSize: 12.5 }}>{label} <span className="mono muted-2" style={{ fontSize: 10.5 }}>{sub}</span></span>
+        <span className="mono tnum">{valueLabel}</span>
+      </div>
+      <div className="bar"><div className="bar-fill" style={{ width: value + "%", background: color }}/></div>
+    </div>
+  );
 }
 
-interface ToolGlobalStats {
-  toolSlug: string;
-  totalCalls: number;
-  successRate: string | null;
-  avgLatencyMs: string | null;
-  p95LatencyMs: string | null;
-  popularityScore: string | null;
-  lastUpdated: string | null;
-}
+export default function ToolDetailPage({ params }: { params: { slug: string } }) {
+  const router = useRouter();
+  const tool = TOOLS_DATA.find(t => t.slug === params.slug);
 
-async function fetchToolProfile(slug: string, token: string) {
-  const res = await fetch(`${API_BASE}/v1/tools/${slug}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<{ tool: Tool; stats: ToolGlobalStats | null }>;
-}
+  if (!tool) return (
+    <div className="card card-pad fade-up">
+      Tool not found. <button className="btn btn-sm" onClick={() => router.push("/tools")} style={{ marginLeft: 8 }}>Back to catalog</button>
+    </div>
+  );
 
-const CATEGORY_LABELS: Record<string, string> = {
-  auth: "Auth",
-  email: "Email",
-  analytics: "Analytics",
-  queue: "Queue",
-  database: "Database",
-  vector_db: "Vector DB",
-  crm: "CRM",
-  payments: "Payments",
-  storage: "Storage",
-  search: "Search",
-  monitoring: "Monitoring",
-  communication: "Communication",
-  ai_gateway: "AI Gateway",
-  llm_provider: "LLM Provider",
-  other: "Other",
-};
+  const isCold = (tool.totalCalls || 0) < 50;
+  const sentiment = parseFloat(tool.sentimentScore || "0");
+  const success = parseFloat(tool.successRate || "0");
+  const popularity = parseFloat(tool.popularityScore || "0");
+  const latencyScore = Math.max(0, 1 - parseInt(tool.avgLatencyMs || "0") / 2000);
+  const composite = Math.min(isCold ? 70 : 100, success * 40 + latencyScore * 20 + popularity * 25 + sentiment * 15);
 
-export default async function ToolProfilePage({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
-  const { slug } = await params;
-  const { getToken } = await auth();
-  const token = (await getToken()) ?? "";
-
-  const data = await fetchToolProfile(slug, token);
-  if (!data) notFound();
-
-  const { tool, stats } = data;
-  const isColdStart = (stats?.totalCalls ?? 0) < 50;
-
-  const successRate =
-    stats?.successRate != null ? (parseFloat(stats.successRate) * 100).toFixed(2) : null;
-  const avgLatency =
-    stats?.avgLatencyMs != null ? Math.round(parseFloat(stats.avgLatencyMs)) : null;
-  const p95Latency =
-    stats?.p95LatencyMs != null ? Math.round(parseFloat(stats.p95LatencyMs)) : null;
-  const popularity =
-    stats?.popularityScore != null ? parseFloat(stats.popularityScore).toFixed(1) : null;
-  const sentiment =
-    tool.sentimentScore != null ? parseFloat(tool.sentimentScore).toFixed(0) : null;
+  const histogram = useMemo(() => {
+    const slug = tool.slug;
+    const r = (() => { let s = 1; for (const c of slug) s = (s * 31 + c.charCodeAt(0)) | 0; return s; })();
+    return Array.from({ length: 24 }, (_, i) => {
+      const x = i / 23;
+      const peak = Math.exp(-Math.pow((x - 0.35), 2) * 14);
+      const noise = (Math.sin(r + i * 1.7) + 1) / 2 * 0.3;
+      return peak * 0.85 + noise * 0.15;
+    });
+  }, [tool.slug]);
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      {/* Back */}
-      <Link
-        href="/tools"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        ← Back to catalog
-      </Link>
-
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+    <div className="fade-up">
+      <div className="page-h">
         <div>
-          <h1 className="text-2xl font-semibold">{tool.name}</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {CATEGORY_LABELS[tool.category] ?? tool.category}
-            {" · "}
-            <span
-              className={`font-medium ${isColdStart ? "text-amber-400" : "text-emerald-400"}`}
-            >
-              {isColdStart ? "Seeded benchmark" : "Live telemetry"}
-            </span>
-          </p>
+          <button className="btn btn-ghost btn-sm" onClick={() => router.push("/tools")} style={{ marginBottom: 8 }}>← Catalog</button>
+          <div className="row" style={{ gap: 16, alignItems: "flex-start" }}>
+            <ToolIcon slug={tool.slug} name={tool.name} size={56}/>
+            <div className="col" style={{ gap: 6 }}>
+              <h1 style={{ marginBottom: 2 }}>{tool.name}</h1>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <Badge>{tool.category.replace("_", " ")}</Badge>
+                {tool.isOpenSource && <Badge tone="ok">open source</Badge>}
+                {tool.isSelfHostable && <Badge>self-hostable</Badge>}
+                {tool.pricingModel && <Badge tone="info">{tool.pricingModel.replace("_", " ")}</Badge>}
+                {isCold ? <Badge tone="info">seeded benchmark</Badge> : <Badge tone="ok"><span className="dot"/>live telemetry</Badge>}
+              </div>
+              <div className="muted" style={{ fontSize: 13, marginTop: 4, maxWidth: 640 }}>{tool.description}</div>
+            </div>
+          </div>
         </div>
-
-        <div className="flex shrink-0 flex-wrap gap-2">
-          {tool.website && (
-            <a
-              href={tool.website}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/30"
-            >
-              Website ↗
-            </a>
-          )}
-          {tool.docsUrl && (
-            <a
-              href={tool.docsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/30"
-            >
-              Docs ↗
-            </a>
-          )}
-          {tool.githubUrl && (
-            <a
-              href={tool.githubUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/30"
-            >
-              GitHub ↗
-            </a>
-          )}
+        <div className="row">
+          {tool.website && <a href={tool.website} target="_blank" rel="noopener" className="btn"><IconGlobe/> Website <IconGithub/></a>}
+          {tool.docsUrl && <a href={tool.docsUrl} target="_blank" rel="noopener" className="btn"><IconBook/> Docs</a>}
+          {tool.githubUrl && <a href={tool.githubUrl} target="_blank" rel="noopener" className="btn"><IconGithub/> GitHub</a>}
         </div>
       </div>
 
-      {tool.description && (
-        <p className="text-sm text-muted-foreground leading-relaxed">{tool.description}</p>
-      )}
-
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Success rate" value={successRate ? `${successRate}%` : "—"} />
-        <StatCard label="Avg latency" value={avgLatency != null ? `${avgLatency}ms` : "—"} />
-        <StatCard label="p95 latency" value={p95Latency != null ? `${p95Latency}ms` : "—"} />
-        <StatCard
-          label="Sentiment"
-          value={sentiment != null ? `${sentiment}/100` : "—"}
-        />
-      </div>
-
-      {/* Score bars */}
-      {stats && (
-        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
-          <h2 className="text-sm font-medium">Intelligence scores</h2>
-          {successRate && (
-            <ScoreBar
-              label="Reliability"
-              value={parseFloat(successRate)}
-              max={100}
-              color="bg-emerald-500"
-              note={isColdStart ? "estimated" : undefined}
-            />
-          )}
-          {popularity && (
-            <ScoreBar
-              label="Popularity"
-              value={parseFloat(popularity)}
-              max={100}
-              color="bg-blue-500"
-            />
-          )}
-          {sentiment && (
-            <ScoreBar
-              label="Community sentiment"
-              value={parseFloat(sentiment)}
-              max={100}
-              color="bg-violet-500"
-            />
-          )}
-          {stats.totalCalls > 0 && (
-            <p className="text-xs text-muted-foreground">
-              Based on {stats.totalCalls.toLocaleString()} telemetry calls
-            </p>
-          )}
+      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "var(--gap-card, 14px)", marginBottom: 14 }}>
+        <div className="card card-pad" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+          <div className="mono muted-2" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase" }}>Composite score</div>
+          <div style={{ position: "relative", width: 140, height: 140 }}>
+            <Ring value={composite} size={140} stroke={10}/>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              <div className="mono tnum" style={{ fontSize: 36, fontWeight: 600, letterSpacing: "-0.02em" }}>{Math.round(composite)}</div>
+              <div className="mono muted-2" style={{ fontSize: 10 }}>/ 100</div>
+            </div>
+          </div>
+          {isCold && <Badge tone="info">capped at 70 (cold-start)</Badge>}
+          <div className="hr" style={{ width: "100%" }}/>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "8px 14px", width: "100%", fontSize: 11.5 }}>
+            <span className="muted-2">Total calls</span><span className="mono tnum">{fmtNum(tool.totalCalls)}</span>
+            <span className="muted-2">Data source</span><span className="mono">{tool.dataSource}</span>
+            <span className="muted-2">Last updated</span><span className="mono muted">4h ago</span>
+          </div>
         </div>
-      )}
 
-      {/* Attributes */}
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-        <h2 className="text-sm font-medium">Attributes</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          <AttributeRow label="Pricing" value={tool.pricingModel ?? "—"} />
-          <AttributeRow
-            label="Open source"
-            value={tool.isOpenSource ? "Yes" : "No"}
-          />
-          <AttributeRow
-            label="Self-hostable"
-            value={tool.isSelfHostable ? "Yes" : "No"}
-          />
-          <AttributeRow
-            label="Data residency"
-            value={
-              tool.dataResidency && tool.dataResidency.length > 0
-                ? tool.dataResidency.join(", ")
-                : "—"
-            }
-          />
+        <div className="card">
+          <div className="hd"><h3>Score breakdown</h3><span className="sub mono">weighted composite</span></div>
+          <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+            <DimensionRow label="Reliability" sub="× 40%" value={success * 100} valueLabel={fmtPct(tool.successRate)} color="var(--success)"/>
+            <DimensionRow label="Latency" sub="× 20%" value={latencyScore * 100} valueLabel={fmtMs(parseInt(tool.avgLatencyMs))} color="var(--accent)"/>
+            <DimensionRow label="Popularity" sub="× 25%" value={popularity * 100} valueLabel={(popularity * 100).toFixed(0) + "/100"} color="var(--violet)"/>
+            <DimensionRow label="Sentiment" sub="× 15%" value={sentiment * 100} valueLabel={(sentiment * 5).toFixed(1) + " ★"} color="var(--info)"/>
+          </div>
         </div>
       </div>
 
-      {/* Tags */}
-      {tool.tags && tool.tags.length > 0 && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium">Tags</h2>
-          <div className="flex flex-wrap gap-1.5">
-            {tool.tags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground"
-              >
-                {tag}
-              </span>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: "var(--gap-card, 14px)" }}>
+        <div className="card">
+          <div className="hd"><h3>Latency distribution</h3><span className="sub mono">last 7 days · {fmtNum(tool.totalCalls)} calls</span></div>
+          <div style={{ padding: 18 }}>
+            <div className="row" style={{ alignItems: "flex-end", gap: 3, height: 140 }}>
+              {histogram.map((h, i) => (
+                <div key={i} style={{ flex: 1, height: h * 100 + "%", background: "linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 40%, transparent))", borderRadius: 2, minHeight: 2 }}/>
+              ))}
+            </div>
+            <div className="row" style={{ justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>
+              <span>0ms</span>
+              <span>{fmtMs(parseInt(tool.avgLatencyMs))} (p50)</span>
+              <span style={{ color: "var(--accent)" }}>{fmtMs(parseInt(tool.p95LatencyMs))} (p95)</span>
+              <span>{fmtMs(parseInt(tool.p95LatencyMs) * 2)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="hd"><h3>Attributes</h3></div>
+          <div style={{ padding: "8px 16px 16px" }}>
+            {([
+              ["slug", <span key="s" className="mono">{tool.slug}</span>],
+              ["category", <span key="c" className="mono">{tool.category}</span>],
+              ["pricing", tool.pricingModel || "—"],
+              ["data residency", tool.dataResidency.length ? tool.dataResidency.join(" · ") : "—"],
+              ["self-hostable", tool.isSelfHostable ? "yes" : "no"],
+              ["open source", tool.isOpenSource ? "yes" : "no"],
+              ["tags", <div key="t" className="row" style={{ gap: 4, flexWrap: "wrap" }}>{tool.tags.map(t => <span key={t} className="chip" style={{ fontSize: 10.5, padding: "1px 7px" }}>{t}</span>)}</div>],
+            ] as [string, React.ReactNode][]).map(([k, v], i) => (
+              <div key={i} className="row" style={{ padding: "7px 0", borderBottom: i < 6 ? "1px solid var(--border)" : "none", justifyContent: "space-between", fontSize: 12 }}>
+                <span className="muted-2 mono" style={{ fontSize: 11 }}>{k}</span>
+                <span style={{ textAlign: "right" }}>{v}</span>
+              </div>
             ))}
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-3 text-center">
-      <p className="text-xl font-semibold tabular-nums">{value}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
-function ScoreBar({
-  label,
-  value,
-  max,
-  color,
-  note,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  color: string;
-  note?: string | undefined;
-}) {
-  const pct = Math.min(100, (value / max) * 100);
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">
-          {label}
-          {note && <span className="ml-1 text-muted-foreground/60">({note})</span>}
-        </span>
-        <span className="font-medium tabular-nums">{value.toFixed(1)}</span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${pct}%` }}
-        />
       </div>
     </div>
-  );
-}
-
-function AttributeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium capitalize">{value}</dd>
-    </>
   );
 }
