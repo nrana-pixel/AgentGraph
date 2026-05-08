@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
-import { WaterfallTimeline } from "../../../../components/traces/WaterfallTimeline";
+import { WaterfallTimeline } from "../../../../components/traces/WaterfallTimelineClient";
 import { formatDistanceToNow, formatDuration } from "../../../../lib/dateUtils";
 
 interface TraceStep {
