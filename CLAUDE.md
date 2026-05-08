@@ -74,9 +74,10 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ```
 apps/api/        Express REST API — all backend logic lives here
-apps/web/        Next.js 15 App Router dashboard
+apps/web/        Next.js 16 App Router dashboard
 apps/worker/     Background worker — ingest consumer + cron jobs
 packages/types/  Shared Zod schemas; the contract between all apps
+packages/sdk/    @agentgraph/sdk — OpenTelemetry-style tracing client
 ```
 
 Turborepo monorepo with npm workspaces. TypeScript strict mode everywhere.
@@ -155,17 +156,17 @@ CLERK_WEBHOOK_SECRET=whsec_...
 
 ## What's built vs what's pending
 
-### Done (Phases 0–2)
+### Done (Phases 0–3)
 - Monorepo scaffold, Docker Compose, ESLint/Prettier/Husky
 - Auth: Clerk integration, org/project/API key management
 - Ingest: Redis queue, worker consumer, cost computation, tool auto-discovery
 - Traces: list + detail endpoints, waterfall timeline dashboard UI
 - Tool catalog: 83 seeded tools, FTS GIN index, recommendation engine with Redis cache
 - Dashboard: traces UI, tool grid, tool profile, recommendations form
+- `@agentgraph/sdk`: `AgentGraph` client, `Trace`/`Span` classes, OpenAI + Anthropic auto-instrumentation
 
-### Pending (Phases 3–4)
-- Phase 3: `@agentgraph/sdk` npm package, OpenTelemetry-style auto-instrumentation
-- Phase 4: billing enforcement, cost spike webhooks, `/cost-explorer` page, `/settings` page, public docs
+### Pending (Phase 4)
+- Billing enforcement, cost spike webhooks, `/cost-explorer` page, `/settings` page, public docs
 
 ## Common tasks
 
@@ -186,8 +187,40 @@ CLERK_WEBHOOK_SECRET=whsec_...
 - Fetch with Clerk token: `const { getToken } = await auth(); const token = await getToken();`
 - Pass token as `Authorization: Bearer ${token}` to the API
 - Client components (interactive forms etc.) go in a separate `*Client.tsx` file
-- In Next.js 15, dynamic route `params` is a `Promise` — always `await params` in server components or use `use(params)` in client components
+- In Next.js 16, dynamic route `params` is a `Promise` — always `await params` in server components or use `use(params)` in client components
 - Keep `page.tsx` as a thin server wrapper; push all client hooks into a co-located `*Client.tsx`
+- ESLint is no longer run during `next build` in Next.js 16 — run it separately via `npm run lint`
+- `next.config.ts` uses `transpilePackages` for `@clerk/nextjs`, `@clerk/clerk-react`, `@clerk/shared`
+
+### Using @agentgraph/sdk
+
+```ts
+import { AgentGraph } from "@agentgraph/sdk";
+
+const ag = new AgentGraph({ apiKey: "ag_live_..." });
+const trace = ag.trace({ agentId: "my-agent", sessionId: "s1", userId: "u1" });
+
+// Wraps any async work — records latency, captures errors automatically
+const result = await trace.step("tool_call", "web_search", async (span) => {
+  span.setInput({ query });
+  const data = await search(query);
+  span.setOutput({ results: data });
+  return data;
+});
+
+await trace.flush(); // POST /v1/ingest
+```
+
+Auto-instrumentation (patches the SDK client in-place):
+```ts
+import { instrumentOpenAI } from "@agentgraph/sdk/openai";
+import { instrumentAnthropic } from "@agentgraph/sdk/anthropic";
+
+instrumentOpenAI(openai, trace);
+instrumentAnthropic(anthropic, trace);
+```
+
+SDK source lives in `packages/sdk/src/`. It has zero runtime dependencies — uses native `fetch` (Node 18+).
 
 ### Cost model pricing
 Add new models to `apps/api/src/lib/modelCosts.ts` AND `apps/worker/src/lib/modelCosts.ts` (both copies).
