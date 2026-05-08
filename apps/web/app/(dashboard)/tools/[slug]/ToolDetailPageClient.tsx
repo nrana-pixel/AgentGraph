@@ -1,6 +1,5 @@
 "use client";
-import { use, useMemo } from "react";
-import Link from "next/link";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { TOOLS_DATA } from "@/lib/data";
 import { fmtMs, fmtPct, fmtNum } from "@/lib/format";
