@@ -1,0 +1,43 @@
+{
+  "name": "@agentgraph/sdk",
+  "version": "0.1.0",
+  "description": "AgentGraph SDK — OpenTelemetry-style tracing for AI agents",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./openai": {
+      "import": "./dist/instrumentation/openai.js",
+      "types": "./dist/instrumentation/openai.d.ts"
+    },
+    "./anthropic": {
+      "import": "./dist/instrumentation/anthropic.js",
+      "types": "./dist/instrumentation/anthropic.d.ts"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@agentgraph/types": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.24.0",
+    "openai": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": { "optional": true },
+    "openai": { "optional": true }
+  }
+}
