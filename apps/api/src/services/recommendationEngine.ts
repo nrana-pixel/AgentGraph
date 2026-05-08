@@ -29,6 +29,10 @@ interface ToolWithStats {
   lastUpdated: Date | null;
 }
 
+type ToolWithNullableStats = Omit<ToolWithStats, "totalCalls"> & {
+  totalCalls: number | null;
+};
+
 export async function getRecommendations(
   query: RecommendQuery,
 ): Promise<RecommendResponse> {
@@ -47,43 +51,10 @@ export async function getRecommendations(
 
   // Full-text search on name + description + tags
   const tsQuery = sql`plainto_tsquery('english', ${task})`;
-  const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(array_to_string(${tools.tags}, ' '), ''))`;
+  const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(immutable_array_to_string(${tools.tags}, ' '), ''))`;
 
-  let candidates: ToolWithStats[] = await db
-    .select({
-      id: tools.id,
-      slug: tools.slug,
-      name: tools.name,
-      description: tools.description,
-      category: tools.category,
-      website: tools.website,
-      docsUrl: tools.docsUrl,
-      isOpenSource: tools.isOpenSource,
-      isSelfHostable: tools.isSelfHostable,
-      pricingModel: tools.pricingModel,
-      dataResidency: tools.dataResidency,
-      tags: tools.tags,
-      dataSource: tools.dataSource,
-      sentimentScore: tools.sentimentScore,
-      totalCalls: toolGlobalStats.totalCalls,
-      successRate: toolGlobalStats.successRate,
-      avgLatencyMs: toolGlobalStats.avgLatencyMs,
-      p95LatencyMs: toolGlobalStats.p95LatencyMs,
-      popularityScore: toolGlobalStats.popularityScore,
-      lastUpdated: toolGlobalStats.lastUpdated,
-    })
-    .from(tools)
-    .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
-    .where(
-      conditions.length > 0
-        ? and(...conditions, sql`${tsVector} @@ ${tsQuery}`)
-        : sql`${tsVector} @@ ${tsQuery}`,
-    );
-
-  // Fallback: if no full-text match, use category or top by popularity
-  if (candidates.length === 0) {
-    const fallbackConditions = conditions.length > 0 ? and(...conditions) : undefined;
-    candidates = await db
+  let candidates: ToolWithStats[] = normalizeToolStatsRows(
+    await db
       .select({
         id: tools.id,
         slug: tools.slug,
@@ -108,8 +79,45 @@ export async function getRecommendations(
       })
       .from(tools)
       .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
-      .where(fallbackConditions)
-      .limit(50);
+      .where(
+        conditions.length > 0
+          ? and(...conditions, sql`${tsVector} @@ ${tsQuery}`)
+          : sql`${tsVector} @@ ${tsQuery}`,
+      ),
+  );
+
+  // Fallback: if no full-text match, use category or top by popularity
+  if (candidates.length === 0) {
+    const fallbackConditions = conditions.length > 0 ? and(...conditions) : undefined;
+    candidates = normalizeToolStatsRows(
+      await db
+        .select({
+          id: tools.id,
+          slug: tools.slug,
+          name: tools.name,
+          description: tools.description,
+          category: tools.category,
+          website: tools.website,
+          docsUrl: tools.docsUrl,
+          isOpenSource: tools.isOpenSource,
+          isSelfHostable: tools.isSelfHostable,
+          pricingModel: tools.pricingModel,
+          dataResidency: tools.dataResidency,
+          tags: tools.tags,
+          dataSource: tools.dataSource,
+          sentimentScore: tools.sentimentScore,
+          totalCalls: toolGlobalStats.totalCalls,
+          successRate: toolGlobalStats.successRate,
+          avgLatencyMs: toolGlobalStats.avgLatencyMs,
+          p95LatencyMs: toolGlobalStats.p95LatencyMs,
+          popularityScore: toolGlobalStats.popularityScore,
+          lastUpdated: toolGlobalStats.lastUpdated,
+        })
+        .from(tools)
+        .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
+        .where(fallbackConditions)
+        .limit(50),
+    );
   }
 
   // Compute category p95 median for latency normalisation
@@ -159,6 +167,13 @@ export async function getRecommendations(
   }));
 
   return { task, recommendations, dataFreshness };
+}
+
+function normalizeToolStatsRows(rows: ToolWithNullableStats[]): ToolWithStats[] {
+  return rows.map((row) => ({
+    ...row,
+    totalCalls: row.totalCalls ?? 0,
+  }));
 }
 
 function computeScore(

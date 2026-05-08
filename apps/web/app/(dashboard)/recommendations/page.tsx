@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import RecommendationsClient from "./RecommendationsClient.js";
+import RecommendationsClient from "./RecommendationsClient";
 
 export default async function RecommendationsPage() {
   const { getToken } = await auth();

@@ -261,7 +261,7 @@ function ScoreBar({
   value: number;
   max: number;
   color: string;
-  note?: string;
+  note?: string | undefined;
 }) {
   const pct = Math.min(100, (value / max) * 100);
   return (

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatDistanceToNow } from "../../../lib/dateUtils.js";
+import { formatDistanceToNow } from "../../../lib/dateUtils";
 
 interface Trace {
   id: string;
