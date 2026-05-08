@@ -14,6 +14,7 @@ export class Trace {
   private steps: TraceStepInput[] = [];
   private startedAt: number;
   private flushed = false;
+  private flushPromise?: Promise<void>;
 
   constructor(
     readonly options: TraceOptions,
@@ -50,27 +51,34 @@ export class Trace {
 
   async flush(status: TraceStatus = "completed"): Promise<void> {
     if (this.flushed || this.steps.length === 0) return;
-    this.flushed = true;
+    if (this.flushPromise) return this.flushPromise;
 
-    const totalLatencyMs = Date.now() - this.startedAt;
-    const totalTokens = this.steps.reduce((s, step) => s + (step.tokenUsage?.total ?? 0), 0);
-    const totalCostUsd = this.steps.reduce((s, step) => s + (step.costUsd ?? 0), 0);
+    this.flushPromise = (async () => {
+      const totalLatencyMs = Date.now() - this.startedAt;
+      const totalTokens = this.steps.reduce((s, step) => s + (step.tokenUsage?.total ?? 0), 0);
+      const totalCostUsd = this.steps.reduce((s, step) => s + (step.costUsd ?? 0), 0);
 
-    const payload: IngestPayload = {
-      agentId: this.options.agentId,
-      env: this.options.env ?? "prod",
-      status,
-      steps: this.steps,
-      totalLatencyMs,
-      metadata: this.options.metadata ?? {},
-    };
+      const payload: IngestPayload = {
+        agentId: this.options.agentId,
+        env: this.options.env ?? "prod",
+        status,
+        steps: this.steps,
+        totalLatencyMs,
+        metadata: this.options.metadata ?? {},
+      };
 
-    if (this.options.traceId !== undefined) payload.traceId = this.options.traceId;
-    if (this.options.sessionId !== undefined) payload.sessionId = this.options.sessionId;
-    if (this.options.userId !== undefined) payload.userId = this.options.userId;
-    if (totalTokens > 0) payload.totalTokens = totalTokens;
-    if (totalCostUsd > 0) payload.totalCostUsd = totalCostUsd;
+      if (this.options.traceId !== undefined) payload.traceId = this.options.traceId;
+      if (this.options.sessionId !== undefined) payload.sessionId = this.options.sessionId;
+      if (this.options.userId !== undefined) payload.userId = this.options.userId;
+      if (totalTokens > 0) payload.totalTokens = totalTokens;
+      if (totalCostUsd > 0) payload.totalCostUsd = totalCostUsd;
 
-    await this.send(payload);
+      await this.send(payload);
+      this.flushed = true;
+    })().finally(() => {
+      delete this.flushPromise;
+    });
+
+    return this.flushPromise;
   }
 }

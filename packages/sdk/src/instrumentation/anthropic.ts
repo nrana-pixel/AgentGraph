@@ -1,17 +1,5 @@
 import type { Trace } from "../trace.js";
 
-interface AnthropicContentBlock {
-  type: string;
-  text?: string;
-}
-
-interface AnthropicMessage {
-  content: AnthropicContentBlock[];
-  usage?: { input_tokens?: number; output_tokens?: number };
-  model?: string;
-  stop_reason?: string | null;
-}
-
 interface AnthropicClient {
   messages: {
     create: (...args: unknown[]) => Promise<unknown>;
@@ -27,26 +15,40 @@ export function instrumentAnthropic(client: AnthropicClient, trace: Trace): void
     const span = trace.startSpan("llm_call", `${model} message`);
 
     span.setModel(model);
-    if (params["messages"] !== undefined) span.setInput({ messages: params["messages"] });
-    if (typeof params["system"] === "string") span.setInput({ system: params["system"], messages: params["messages"] });
+    const input: Record<string, unknown> = {};
+    if (params["messages"] !== undefined) input["messages"] = params["messages"];
+    if (typeof params["system"] === "string") input["system"] = params["system"];
+    if (Object.keys(input).length > 0) span.setInput(input);
 
+    let result: unknown;
     try {
-      const result = await original(...args);
-      const msg = result as AnthropicMessage;
-      const text = msg.content.find((b) => b.type === "text")?.text ?? "";
-      span.setOutput({ text, stop_reason: msg.stop_reason ?? null });
-      if (msg.usage) {
-        const input = msg.usage.input_tokens ?? 0;
-        const output = msg.usage.output_tokens ?? 0;
-        span.setTokenUsage({ prompt: input, completion: output, total: input + output });
-      }
-      span.end();
-      trace.addSpan(span);
-      return result;
+      result = await original(...args);
     } catch (err) {
       span.setError(err instanceof Error ? err : String(err)).end();
       trace.addSpan(span);
       throw err;
     }
+
+    // Best-effort response parsing — never crash the caller
+    try {
+      const r = result as Record<string, unknown>;
+      const content = Array.isArray(r["content"]) ? r["content"] : [];
+      const textBlock = content.find(
+        (b: unknown) => (b as Record<string, unknown>)?.["type"] === "text"
+      ) as Record<string, unknown> | undefined;
+      const text = typeof textBlock?.["text"] === "string" ? textBlock["text"] : "";
+      span.setOutput({ text, stop_reason: (r["stop_reason"] as string | null | undefined) ?? null });
+      const usage = r["usage"];
+      if (usage !== null && typeof usage === "object") {
+        const u = usage as Record<string, unknown>;
+        const inp = (u["input_tokens"] as number | undefined) ?? 0;
+        const out = (u["output_tokens"] as number | undefined) ?? 0;
+        span.setTokenUsage({ prompt: inp, completion: out, total: inp + out });
+      }
+    } catch { /* ignore */ }
+
+    span.end();
+    trace.addSpan(span);
+    return result;
   };
 }

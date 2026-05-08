@@ -1,12 +1,5 @@
 import type { Trace } from "../trace.js";
 
-// Minimal structural types — avoids requiring openai as a hard dep
-interface OpenAIChatCompletion {
-  choices: Array<{ message: { role: string; content: string | null } }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
-  model?: string;
-}
-
 interface OpenAIClient {
   chat: {
     completions: {
@@ -26,25 +19,35 @@ export function instrumentOpenAI(client: OpenAIClient, trace: Trace): void {
     span.setModel(model);
     if (params["messages"] !== undefined) span.setInput({ messages: params["messages"] });
 
+    let result: unknown;
     try {
-      const result = await original(...args);
-      const completion = result as OpenAIChatCompletion;
-      const message = completion.choices[0]?.message;
-      if (message !== undefined) span.setOutput({ message });
-      if (completion.usage) {
-        span.setTokenUsage({
-          prompt: completion.usage.prompt_tokens ?? 0,
-          completion: completion.usage.completion_tokens ?? 0,
-          total: completion.usage.total_tokens ?? 0,
-        });
-      }
-      span.end();
-      trace.addSpan(span);
-      return result;
+      result = await original(...args);
     } catch (err) {
       span.setError(err instanceof Error ? err : String(err)).end();
       trace.addSpan(span);
       throw err;
     }
+
+    // Best-effort response parsing — never crash the caller
+    try {
+      const r = result as Record<string, unknown>;
+      const choices = Array.isArray(r["choices"]) ? r["choices"] : [];
+      const first = choices[0] as Record<string, unknown> | undefined;
+      const message = first?.["message"];
+      if (message !== undefined) span.setOutput({ message });
+      const usage = r["usage"];
+      if (usage !== null && typeof usage === "object") {
+        const u = usage as Record<string, unknown>;
+        span.setTokenUsage({
+          prompt: (u["prompt_tokens"] as number | undefined) ?? 0,
+          completion: (u["completion_tokens"] as number | undefined) ?? 0,
+          total: (u["total_tokens"] as number | undefined) ?? 0,
+        });
+      }
+    } catch { /* ignore */ }
+
+    span.end();
+    trace.addSpan(span);
+    return result;
   };
 }
