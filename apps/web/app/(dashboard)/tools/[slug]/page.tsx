@@ -1,5 +1,5 @@
 "use client";
-import { useMemo } from "react";
+import { use, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TOOLS_DATA } from "@/lib/data";
@@ -19,9 +19,10 @@ function DimensionRow({ label, sub, value, valueLabel, color }: { label: string;
   );
 }
 
-export default function ToolDetailPage({ params }: { params: { slug: string } }) {
+export default function ToolDetailPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = use(params);
   const router = useRouter();
-  const tool = TOOLS_DATA.find(t => t.slug === params.slug);
+  const tool = TOOLS_DATA.find(t => t.slug === slug);
 
   if (!tool) return (
     <div className="card card-pad fade-up">

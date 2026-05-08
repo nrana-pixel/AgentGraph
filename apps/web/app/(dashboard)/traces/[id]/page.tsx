@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { use, useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { TRACES_DATA, makeStepsForTrace } from "@/lib/data";
 import { fmtMs, fmtNum, fmtMoney, relTime } from "@/lib/format";
@@ -100,10 +100,11 @@ function TimelineViz({ steps, totalLat, active, setActive }: { steps: ReturnType
   );
 }
 
-export default function TraceDetailPage({ params }: { params: { id: string } }) {
+export default function TraceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const router = useRouter();
   const toast = useToast();
-  const traceIdx = TRACES_DATA.findIndex(t => t.id === params.id);
+  const traceIdx = TRACES_DATA.findIndex(t => t.id === id);
   const trace = TRACES_DATA[traceIdx];
   const prevTrace = traceIdx > 0 ? TRACES_DATA[traceIdx - 1] : null;
   const nextTrace = traceIdx >= 0 && traceIdx < TRACES_DATA.length - 1 ? TRACES_DATA[traceIdx + 1] : null;
@@ -114,7 +115,7 @@ export default function TraceDetailPage({ params }: { params: { id: string } }) 
   const [typeFilter, setTypeFilter] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
 
-  const steps = useMemo(() => trace ? makeStepsForTrace(trace, traceIdx) : [], [params.id]);
+  const steps = useMemo(() => trace ? makeStepsForTrace(trace, traceIdx) : [], [id]);
   const totalLat = steps.reduce((a, s) => a + (s.latencyMs || 0), 0);
   const meta = (() => { try { return JSON.parse(trace?.metadata ?? "{}"); } catch { return {}; } })();
 
@@ -124,7 +125,7 @@ export default function TraceDetailPage({ params }: { params: { id: string } }) 
     if (stepFilter && !(s.name + " " + (s.toolName ?? "") + " " + (s.model ?? "")).toLowerCase().includes(stepFilter.toLowerCase())) return false;
     return true;
   });
-  const active = steps[activeStep];
+  const active = steps[activeStep] ?? steps[0];
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
@@ -143,7 +144,7 @@ export default function TraceDetailPage({ params }: { params: { id: string } }) 
   if (!trace) return (
     <div className="fade-up">
       <div className="page-h"><h1>Trace not found</h1></div>
-      <div className="card card-pad muted">No trace with id <code className="mono">{params.id}</code>. <button className="btn btn-sm" onClick={() => router.push("/traces")} style={{ marginLeft: 8 }}>Back</button></div>
+      <div className="card card-pad muted">No trace with id <code className="mono">{id}</code>. <button className="btn btn-sm" onClick={() => router.push("/traces")} style={{ marginLeft: 8 }}>Back</button></div>
     </div>
   );
 
@@ -223,9 +224,9 @@ export default function TraceDetailPage({ params }: { params: { id: string } }) 
               <div style={{ padding: "32px 16px", textAlign: "center" }} className="muted">No steps match the filter.</div>
             ) : (
               <>
-                {viz === "bars" && <BarsViz steps={filteredSteps} totalLat={totalLat} active={filteredSteps.indexOf(active)} setActive={i => setActiveStep(steps.indexOf(filteredSteps[i]))}/>}
-                {viz === "flame" && <FlameViz steps={filteredSteps} totalLat={totalLat} active={filteredSteps.indexOf(active)} setActive={i => setActiveStep(steps.indexOf(filteredSteps[i]))}/>}
-                {viz === "timeline" && <TimelineViz steps={filteredSteps} totalLat={totalLat} active={filteredSteps.indexOf(active)} setActive={i => setActiveStep(steps.indexOf(filteredSteps[i]))}/>}
+                {viz === "bars" && <BarsViz steps={filteredSteps} totalLat={totalLat} active={active ? filteredSteps.indexOf(active) : -1} setActive={i => { const s = filteredSteps[i]; if (s) setActiveStep(steps.indexOf(s)); }}/>}
+                {viz === "flame" && <FlameViz steps={filteredSteps} totalLat={totalLat} active={active ? filteredSteps.indexOf(active) : -1} setActive={i => { const s = filteredSteps[i]; if (s) setActiveStep(steps.indexOf(s)); }}/>}
+                {viz === "timeline" && <TimelineViz steps={filteredSteps} totalLat={totalLat} active={active ? filteredSteps.indexOf(active) : -1} setActive={i => { const s = filteredSteps[i]; if (s) setActiveStep(steps.indexOf(s)); }}/>}
               </>
             )}
           </div>

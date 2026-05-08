@@ -34,15 +34,15 @@ export function CommandPalette() {
     if (!open) return [];
     const list: { id: string; label: string; hint?: string; group: string; action: () => void; shortcut?: string; icon?: React.ReactNode }[] = [];
 
-    [
+    (([
       ["dashboard", "Go to Overview", "/dashboard", "G D"],
       ["traces", "Go to Traces", "/traces", "G T"],
       ["tools", "Go to Tool catalog", "/tools", "G O"],
       ["recommend", "Go to Recommendations", "/recommendations", "G R"],
       ["settings", "Go to Settings", "/settings", "G S"],
-    ].forEach(([k, label, path, sc]) =>
+    ] as [string, string, string, string][]).forEach(([k, label, path, sc]) =>
       list.push({ id: "p:" + k, label, group: "Page", action: () => { router.push(path); setOpen(false); }, shortcut: sc })
-    );
+    ));
 
     list.push({ id: "a:theme", label: "Toggle theme", group: "Action", action: () => { setTweak("theme", tweaks.theme === "dark" ? "light" : "dark"); setOpen(false); } });
     list.push({ id: "a:density", label: "Cycle density", group: "Action", action: () => { const o = ["compact","regular","cozy"]; setTweak("density", o[(o.indexOf(tweaks.density)+1)%3] as "compact"|"regular"|"cozy"); setOpen(false); } });
