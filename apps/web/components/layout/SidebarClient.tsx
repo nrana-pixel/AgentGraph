@@ -1,14 +1,15 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook } from "@/components/ui/icons";
+import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook, IconCost } from "@/components/ui/icons";
 
 const ROUTES = [
-  { id: "dashboard", path: "/dashboard", label: "Overview",     Icon: IconDashboard, count: null },
-  { id: "traces",    path: "/traces",    label: "Traces",        Icon: IconTrace,     count: 64   },
-  { id: "tools",     path: "/tools",     label: "Tool catalog",  Icon: IconTools,     count: 30   },
-  { id: "recommendations", path: "/recommendations", label: "Recommend", Icon: IconRec, count: null },
-  { id: "settings",  path: "/settings",  label: "Settings",      Icon: IconSettings,  count: null },
+  { id: "dashboard",    path: "/dashboard",    label: "Overview",     Icon: IconDashboard, count: null },
+  { id: "traces",       path: "/traces",       label: "Traces",       Icon: IconTrace,     count: 64   },
+  { id: "tools",        path: "/tools",        label: "Tool catalog", Icon: IconTools,     count: 30   },
+  { id: "recommendations", path: "/recommendations", label: "Recommend", Icon: IconRec,  count: null },
+  { id: "cost-explorer", path: "/cost-explorer", label: "Cost explorer", Icon: IconCost, count: null },
+  { id: "settings",    path: "/settings",    label: "Settings",       Icon: IconSettings,  count: null },
 ];
 
 export function Sidebar() {
@@ -17,6 +18,7 @@ export function Sidebar() {
     if (pathname.startsWith("/traces")) return "traces";
     if (pathname.startsWith("/tools")) return "tools";
     if (pathname.startsWith("/recommend")) return "recommendations";
+    if (pathname.startsWith("/cost-explorer")) return "cost-explorer";
     if (pathname.startsWith("/settings")) return "settings";
     return "dashboard";
   })();

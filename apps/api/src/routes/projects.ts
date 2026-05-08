@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { traces, traceSteps, projects, organizations, apiKeys } from "../db/schema.js";
+import { traces, traceSteps, projects, organizations, apiKeys, webhooks } from "../db/schema.js";
 import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
@@ -249,6 +249,78 @@ router.delete(
     }
 
     res.json({ revoked: true });
+  },
+);
+
+// GET /v1/projects/:id/billing — plan + monthly usage
+router.get(
+  "/:id/billing",
+  rateLimiter,
+  apiKeyAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const authed = req as AuthedRequest;
+    const { id } = req.params as { id: string };
+
+    if (id !== authed.projectId) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+
+    const PLAN_LIMITS: Record<string, number> = { free: 10_000, pro: 500_000, team: 5_000_000 };
+
+    const [row] = await db
+      .select({
+        plan: organizations.plan,
+        tracesUsed: organizations.tracesUsedThisMonth,
+        stripeCustomerId: organizations.stripeCustomerId,
+      })
+      .from(projects)
+      .innerJoin(organizations, eq(projects.orgId, organizations.id))
+      .where(eq(projects.id, id));
+
+    if (!row) {
+      res.status(404).json({ error: "project_not_found" });
+      return;
+    }
+
+    const limit = PLAN_LIMITS[row.plan] ?? PLAN_LIMITS["free"]!;
+    res.json({
+      plan: row.plan,
+      tracesUsed: row.tracesUsed,
+      tracesLimit: limit,
+      usagePct: Math.min(1, row.tracesUsed / limit),
+      hasPaymentMethod: Boolean(row.stripeCustomerId),
+    });
+  },
+);
+
+// GET /v1/projects/:id/webhooks — list webhooks for a project
+router.get(
+  "/:id/webhooks",
+  rateLimiter,
+  apiKeyAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const authed = req as AuthedRequest;
+    const { id } = req.params as { id: string };
+
+    if (id !== authed.projectId) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+
+    const rows = await db
+      .select({
+        id: webhooks.id,
+        url: webhooks.url,
+        events: webhooks.events,
+        enabled: webhooks.enabled,
+        createdAt: webhooks.createdAt,
+      })
+      .from(webhooks)
+      .where(eq(webhooks.projectId, id))
+      .orderBy(desc(webhooks.createdAt));
+
+    res.json({ webhooks: rows });
   },
 );
 
