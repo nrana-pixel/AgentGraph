@@ -3,7 +3,7 @@ import type { SVGProps } from "react";
 
 type IconProps = { size?: number; className?: string; style?: React.CSSProperties };
 
-function mkIcon(d: string, sw = 1.5, fill = "none", sz = 14, tag: "path" | "g" = "path") {
+function mkIcon(d: string, sw = 1.5, fill = "none", sz = 14) {
   return function Icon({ size, className, style }: IconProps) {
     const s = size ?? sz;
     const stroke = fill === "currentColor" ? "none" : "currentColor";
