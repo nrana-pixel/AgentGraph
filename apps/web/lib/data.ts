@@ -325,6 +325,67 @@ export const API_KEYS_INITIAL = [
   { id: "k_03", name: "CI tests", prefix: "ag_live_z71m...kQ8b", lastUsed: "3 days ago", createdAt: "2026-01-22T09:11:00Z" },
 ];
 
+// ---------------------------------------------------------------------------
+// Cost Explorer data
+// ---------------------------------------------------------------------------
+
+function buildCostData(days: number) {
+  const series = Array.from({ length: days }, (_, i) => {
+    const d = new Date(Date.now() - (days - 1 - i) * 86400_000);
+    const r = mulberry32(i + 42);
+    const weekday = d.getDay();
+    const base = weekday === 0 || weekday === 6 ? 0.4 : 1.0;
+    return {
+      date: d.toISOString().slice(0, 10),
+      costUsd: parseFloat((base * (0.80 + r() * 1.40 + i * 0.025)).toFixed(4)),
+      tokens: Math.floor(base * (120_000 + r() * 280_000 + i * 3_000)),
+      traces: Math.floor(base * (80 + r() * 160 + i * 2)),
+    };
+  });
+
+  const byModel = [
+    { model: "claude-opus-4-7", costUsd: 14.82, tokens: 1_840_200, calls: 312 },
+    { model: "claude-sonnet-4-6", costUsd: 9.17, tokens: 3_210_400, calls: 1_088 },
+    { model: "gpt-4o", costUsd: 6.44, tokens: 2_100_800, calls: 641 },
+    { model: "claude-haiku-4-5", costUsd: 1.93, tokens: 4_820_100, calls: 2_340 },
+    { model: "gpt-4o-mini", costUsd: 0.87, tokens: 5_410_700, calls: 3_120 },
+    { model: "gemini-1.5-pro", costUsd: 0.61, tokens: 980_300, calls: 218 },
+  ];
+
+  const byAgent = [
+    { agentId: "support-bot", costUsd: 11.23, traces: 1_482, tokens: 2_840_100, errorRate: 0.012 },
+    { agentId: "code-reviewer", costUsd: 9.88, traces: 743, tokens: 3_120_400, errorRate: 0.008 },
+    { agentId: "data-pipeline", costUsd: 6.14, traces: 2_210, tokens: 1_840_200, errorRate: 0.031 },
+    { agentId: "rag-assistant", costUsd: 4.77, traces: 981, tokens: 2_110_500, errorRate: 0.019 },
+    { agentId: "email-drafter", costUsd: 1.82, traces: 3_104, tokens: 820_400, errorRate: 0.004 },
+  ];
+
+  const totals = {
+    costUsd: series.reduce((s, d) => s + d.costUsd, 0),
+    tokens: series.reduce((s, d) => s + d.tokens, 0),
+    traces: series.reduce((s, d) => s + d.traces, 0),
+  };
+
+  return { series, byModel, byAgent, totals };
+}
+
+export const COST_DATA_7D = buildCostData(7);
+export const COST_DATA_30D = buildCostData(30);
+export const COST_DATA_90D = buildCostData(90);
+
+export const BILLING = {
+  plan: "pro" as const,
+  tracesUsed: 41_280,
+  tracesLimit: 500_000,
+  periodStart: "2026-05-01",
+  periodEnd: "2026-05-31",
+};
+
+export const WEBHOOKS_INITIAL = [
+  { id: "wh_01", url: "https://api.acme.dev/agentgraph/ingest", events: ["cost_spike", "trace_completed"], enabled: true, createdAt: "2026-04-12T10:00:00Z" },
+  { id: "wh_02", url: "https://hooks.slack.com/services/T0X/B0Y/abc123", events: ["cost_spike"], enabled: false, createdAt: "2026-03-20T08:30:00Z" },
+];
+
 export const STEPS_DATA: Record<string, TraceStep[]> = {};
 TRACES_DATA.forEach((t, i) => {
   STEPS_DATA[t.id] = makeStepsForTrace(t, i);

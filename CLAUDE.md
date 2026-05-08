@@ -156,7 +156,7 @@ CLERK_WEBHOOK_SECRET=whsec_...
 
 ## What's built vs what's pending
 
-### Done (Phases 0–3)
+### Done (Phases 0–4)
 - Monorepo scaffold, Docker Compose, ESLint/Prettier/Husky
 - Auth: Clerk integration, org/project/API key management
 - Ingest: Redis queue, worker consumer, cost computation, tool auto-discovery
@@ -164,9 +164,36 @@ CLERK_WEBHOOK_SECRET=whsec_...
 - Tool catalog: 83 seeded tools, FTS GIN index, recommendation engine with Redis cache
 - Dashboard: traces UI, tool grid, tool profile, recommendations form
 - `@agentgraph/sdk`: `AgentGraph` client, `Trace`/`Span` classes, OpenAI + Anthropic auto-instrumentation
+- **Phase 4**: Billing enforcement (plan limits → 402), cost spike webhooks (worker fires HMAC-signed POST when trace cost ≥ threshold), `/cost-explorer` page (daily chart + model/agent breakdown), `/settings` page (billing meter + API key CRUD + webhook CRUD), `GET /billing` + `GET /webhooks` API endpoints
 
-### Pending (Phase 4)
-- Billing enforcement, cost spike webhooks, `/cost-explorer` page, `/settings` page, public docs
+### Phase 4 details
+
+#### Billing enforcement
+- `POST /v1/ingest` checks `organizations.tracesUsedThisMonth` vs `PLAN_TRACE_LIMITS` (free: 10k, pro: 500k, team: 5M)
+- Returns `402 trace_limit_exceeded` with upgrade message when over quota
+- `GET /v1/projects/:id/billing` returns plan, usage, limit, usagePct
+
+#### Cost spike webhooks
+- Worker fires webhooks after every trace insert where `totalCostUsd ≥ COST_SPIKE_THRESHOLD_USD` (default $1.00, override via env var)
+- Only fires to webhooks with `"cost_spike"` in their events array
+- HMAC-SHA256 signed with per-webhook secret; header: `X-AgentGraph-Signature: sha256=<hex>`
+- Timeout: 5s per webhook; uses `Promise.allSettled` so one failure doesn't block others
+
+#### Cost Explorer page
+- Route: `/cost-explorer`
+- Period selector: 7d / 30d / 90d
+- Stats: total spend, tokens, traces, avg cost/trace
+- Daily bar chart
+- Model breakdown table (cost, tokens, calls, % share)
+- Agent breakdown table (cost, traces, tokens, error rate)
+
+#### Settings page
+- Billing card with usage meter bar (green/yellow/red by %)
+- API key CRUD (create → show raw key once, revoke)
+- Webhook CRUD (add URL + event checkboxes, toggle enabled, delete)
+
+### Pending (Phase 5)
+- Public documentation site, Stripe billing integration, SSO/SAML for enterprise plan
 
 ## Common tasks
 

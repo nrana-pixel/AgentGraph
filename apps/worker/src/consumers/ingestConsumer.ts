@@ -1,10 +1,13 @@
 import { drizzle } from "drizzle-orm/postgres-js";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import Redis from "ioredis";
+import { createHmac } from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { IngestPayloadSchema } from "@agentgraph/types";
 import { computeCost } from "../lib/modelCosts.js";
+import { traces, traceSteps, tools, webhooks } from "../db/schema.js";
 
 const QUEUE_KEY = "agentgraph:ingest:queue";
 
@@ -15,8 +18,6 @@ export async function startIngestConsumer(
   const pgClient = postgres(databaseUrl);
   const db = drizzle(pgClient);
   const redis = new Redis(redisUrl);
-
-  const { traces, traceSteps, tools } = await import("../db/schema.js");
 
   console.log("[ingest-consumer] started, polling queue:", QUEUE_KEY);
 
@@ -46,6 +47,7 @@ export async function startIngestConsumer(
     };
 
     const traceId = payload.traceId ?? uuidv4();
+    let committedCostUsd: number | null = null;
 
     try {
       await db.transaction(async (tx) => {
@@ -95,6 +97,7 @@ export async function startIngestConsumer(
 
         const finalCostUsd =
           payload.totalCostUsd ?? (totalComputedCostUsd > 0 ? totalComputedCostUsd : null);
+        committedCostUsd = finalCostUsd;
         const finalTokens =
           payload.totalTokens ?? (totalComputedTokens > 0 ? totalComputedTokens : null);
 
@@ -140,10 +143,69 @@ export async function startIngestConsumer(
             .onConflictDoNothing();
         }
       });
+      // ── 5. Fire cost-spike webhooks if threshold exceeded ────────────
+      if (committedCostUsd !== null && committedCostUsd >= COST_SPIKE_THRESHOLD_USD) {
+        fireCostSpikeWebhooks(db, payload.projectId, {
+          traceId,
+          agentId: payload.agentId,
+          costUsd: committedCostUsd,
+        }).catch((e) => console.error("[ingest-consumer] webhook fire failed:", e));
+      }
     } catch (err) {
       console.error("[ingest-consumer] db transaction failed:", err);
     }
   }
+}
+
+const COST_SPIKE_THRESHOLD_USD = parseFloat(
+  process.env["COST_SPIKE_THRESHOLD_USD"] ?? "1.00",
+);
+
+async function fireCostSpikeWebhooks(
+  db: PostgresJsDatabase,
+  projectId: string,
+  context: { traceId: string; agentId: string; costUsd: number },
+): Promise<void> {
+  const targets = await db
+    .select({ url: webhooks.url, secret: webhooks.secret, events: webhooks.events })
+    .from(webhooks)
+    .where(
+      and(
+        eq(webhooks.projectId, projectId),
+        eq(webhooks.enabled, true),
+      ),
+    );
+
+  if (targets.length === 0) return;
+
+  const body = JSON.stringify({
+    event: "cost_spike",
+    projectId,
+    traceId: context.traceId,
+    agentId: context.agentId,
+    costUsd: context.costUsd,
+    threshold: COST_SPIKE_THRESHOLD_USD,
+    timestamp: new Date().toISOString(),
+  });
+
+  await Promise.allSettled(
+    targets
+      .filter((t) => t.events?.includes("cost_spike"))
+      .map(async (target) => {
+        const sig = createHmac("sha256", target.secret)
+          .update(body)
+          .digest("hex");
+        await fetch(target.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-AgentGraph-Signature": `sha256=${sig}`,
+          },
+          body,
+          signal: AbortSignal.timeout(5000),
+        });
+      }),
+  );
 }
 
 function toTitleCase(slug: string): string {
