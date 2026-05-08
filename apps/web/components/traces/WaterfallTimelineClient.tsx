@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatDuration, formatTimestamp } from "../../lib/dateUtils.js";
+import { formatDuration, formatTimestamp } from "../../lib/dateUtils";
 
 interface TraceStep {
   id: string;
