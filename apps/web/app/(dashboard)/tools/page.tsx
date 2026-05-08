@@ -1,10 +1,34 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { TOOLS_DATA, TOOL_CATEGORIES } from "@/lib/data";
+import { TOOL_CATEGORIES } from "@/lib/data";
 import { fmtNum, fmtMs, fmtPct } from "@/lib/format";
 import { Badge, ToolIcon } from "@/components/ui/primitives";
 import { IconSearch } from "@/components/ui/icons";
+import { useProject } from "@/hooks/useProject";
+import { apiGet } from "@/lib/api";
+
+interface ApiTool {
+  slug: string;
+  name: string;
+  category: string;
+  description: string | null;
+  website: string | null;
+  docsUrl: string | null;
+  githubUrl: string | null;
+  isOpenSource: boolean;
+  isSelfHostable: boolean;
+  pricingModel: string | null;
+  dataResidency: string[] | null;
+  tags: string[] | null;
+  dataSource: string;
+  sentimentScore: string | null;
+  successRate: string | null;
+  avgLatencyMs: number | null;
+  p95LatencyMs: number | null;
+  totalCalls: number | null;
+  popularityScore: string | null;
+}
 
 function Metric({ label, value, color }: { label: string; value: string; color: string }) {
   return (
@@ -16,40 +40,56 @@ function Metric({ label, value, color }: { label: string; value: string; color: 
 }
 
 export default function ToolsPage() {
+  const { token, loading: projectLoading } = useProject();
+  const [tools, setTools] = useState<ApiTool[]>([]);
   const [cat, setCat] = useState("");
   const [q, setQ] = useState("");
   const [pricing, setPricing] = useState("");
   const [oss, setOss] = useState(false);
   const [sortBy, setSortBy] = useState("popularity");
+  const [fetching, setFetching] = useState(false);
   const router = useRouter();
 
+  useEffect(() => {
+    if (!token) return;
+    setFetching(true);
+    apiGet<{ tools: ApiTool[] }>("/v1/tools?limit=100", token)
+      .then(data => setTools(data.tools))
+      .catch(() => {})
+      .finally(() => setFetching(false));
+  }, [token]);
+
   const filtered = useMemo(() => {
-    let list = TOOLS_DATA.slice();
+    let list = tools.slice();
     if (cat) list = list.filter(t => t.category === cat);
     if (pricing) list = list.filter(t => t.pricingModel === pricing);
     if (oss) list = list.filter(t => t.isOpenSource);
-    if (q) list = list.filter(t => (t.name + " " + t.description + " " + t.tags.join(" ")).toLowerCase().includes(q.toLowerCase()));
+    if (q) list = list.filter(t => ((t.name ?? "") + " " + (t.description ?? "") + " " + (t.tags ?? []).join(" ")).toLowerCase().includes(q.toLowerCase()));
     list.sort((a, b) => {
-      if (sortBy === "popularity") return parseFloat(b.popularityScore || "0") - parseFloat(a.popularityScore || "0");
-      if (sortBy === "success") return parseFloat(b.successRate || "0") - parseFloat(a.successRate || "0");
-      if (sortBy === "latency") return parseFloat(a.avgLatencyMs || "9999") - parseFloat(b.avgLatencyMs || "9999");
+      if (sortBy === "popularity") return parseFloat(b.popularityScore ?? "0") - parseFloat(a.popularityScore ?? "0");
+      if (sortBy === "success") return parseFloat(b.successRate ?? "0") - parseFloat(a.successRate ?? "0");
+      if (sortBy === "latency") return (a.avgLatencyMs ?? 9999) - (b.avgLatencyMs ?? 9999);
       return 0;
     });
     return list;
-  }, [cat, q, pricing, oss, sortBy]);
+  }, [tools, cat, q, pricing, oss, sortBy]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    TOOLS_DATA.forEach(t => { c[t.category] = (c[t.category] ?? 0) + 1; });
+    tools.forEach(t => { c[t.category] = (c[t.category] ?? 0) + 1; });
     return c;
-  }, []);
+  }, [tools]);
+
+  if (projectLoading || fetching) {
+    return <div className="fade-up"><div className="page-h"><div><h1>Tool catalog</h1></div></div><div className="card card-pad muted" style={{ textAlign: "center" }}>Loading…</div></div>;
+  }
 
   return (
     <div className="fade-up">
       <div className="page-h">
         <div>
           <h1>Tool catalog</h1>
-          <div className="sub">{TOOLS_DATA.length} tools across {TOOL_CATEGORIES.length} categories · benchmarks updated 4h ago</div>
+          <div className="sub">{tools.length} tools across {TOOL_CATEGORIES.length} categories · benchmarks updated 4h ago</div>
         </div>
         <div className="row">
           <div className="kbar" style={{ minWidth: 240 }}>
@@ -60,7 +100,7 @@ export default function ToolsPage() {
       </div>
 
       <div className="row" style={{ flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-        <span className="chip" data-active={cat === "" ? "true" : undefined} onClick={() => setCat("")}>all <span className="muted-2 mono">{TOOLS_DATA.length}</span></span>
+        <span className="chip" data-active={cat === "" ? "true" : undefined} onClick={() => setCat("")}>all <span className="muted-2 mono">{tools.length}</span></span>
         {TOOL_CATEGORIES.filter(c => counts[c]).map(c => (
           <span key={c} className="chip" data-active={cat === c ? "true" : undefined} onClick={() => setCat(c)}>
             {c.replace("_", " ")} <span className="muted-2 mono">{counts[c]}</span>
@@ -92,7 +132,7 @@ export default function ToolsPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
         {filtered.map(tool => {
-          const isCold = (tool.totalCalls || 0) < 50;
+          const isCold = (tool.totalCalls ?? 0) < 50;
           return (
             <div key={tool.slug} className="tool-card" onClick={() => router.push("/tools/" + tool.slug)}>
               <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
@@ -109,13 +149,13 @@ export default function ToolsPage() {
               <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>{tool.description}</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, paddingTop: 4 }}>
                 <Metric label="success" value={fmtPct(tool.successRate)} color="var(--success)"/>
-                <Metric label="p50" value={fmtMs(parseInt(tool.avgLatencyMs))} color="var(--accent)"/>
-                <Metric label="p95" value={fmtMs(parseInt(tool.p95LatencyMs))} color="var(--info)"/>
+                <Metric label="p50" value={fmtMs(tool.avgLatencyMs ?? undefined)} color="var(--accent)"/>
+                <Metric label="p95" value={fmtMs(tool.p95LatencyMs ?? undefined)} color="var(--info)"/>
               </div>
               <div className="row" style={{ flexWrap: "wrap", gap: 4, paddingTop: 4 }}>
-                {tool.tags.slice(0, 3).map(tag => <span key={tag} className="chip" style={{ fontSize: 10.5, padding: "1px 7px" }}>{tag}</span>)}
+                {(tool.tags ?? []).slice(0, 3).map(tag => <span key={tag} className="chip" style={{ fontSize: 10.5, padding: "1px 7px" }}>{tag}</span>)}
                 <div className="spacer"/>
-                <span className="mono muted-2" style={{ fontSize: 10.5 }}>{fmtNum(tool.totalCalls)} calls</span>
+                <span className="mono muted-2" style={{ fontSize: 10.5 }}>{fmtNum(tool.totalCalls ?? 0)} calls</span>
               </div>
             </div>
           );

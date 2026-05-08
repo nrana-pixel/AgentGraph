@@ -1,11 +1,19 @@
 "use client";
-import { useState } from "react";
-import { COST_DATA_7D, COST_DATA_30D, COST_DATA_90D, BILLING } from "@/lib/data";
+import { useState, useEffect } from "react";
 import { fmtMoney, fmtNum } from "@/lib/format";
+import { useProject } from "@/hooks/useProject";
+import { apiGet } from "@/lib/api";
 
 type Period = "7d" | "30d" | "90d";
 
-const PERIOD_DATA = { "7d": COST_DATA_7D, "30d": COST_DATA_30D, "90d": COST_DATA_90D };
+const PERIOD_DAYS: Record<Period, number> = { "7d": 7, "30d": 30, "90d": 90 };
+
+interface StatsResponse {
+  totals: { traceCount: number; totalCostUsd: number; totalTokens: number; errorRate: number };
+  dailyStats: { date: string; totalCostUsd: number; traceCount: number; totalTokens: number }[];
+  costByModel: { model: string | null; totalCostUsd: number; totalTokens: number; callCount: number }[];
+  topAgents: { agentId: string; traceCount: number; errorRate: number; totalTokens: number; totalCostUsd: number }[];
+}
 
 function BarChart({ series }: { series: { date: string; costUsd: number }[] }) {
   const max = Math.max(...series.map(d => d.costUsd), 0.01);
@@ -37,18 +45,45 @@ function MeterBar({ used, limit, tone }: { used: number; limit: number; tone?: "
 }
 
 export default function CostExplorerPageClient() {
+  const { project, token, loading: projectLoading } = useProject();
   const [period, setPeriod] = useState<Period>("30d");
-  const data = PERIOD_DATA[period];
+  const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [billing, setBilling] = useState<{ plan: string; tracesUsed: number; tracesLimit: number; usagePct: number } | null>(null);
+  const [fetching, setFetching] = useState(false);
 
-  const usagePct = BILLING.tracesUsed / BILLING.tracesLimit;
+  useEffect(() => {
+    if (!project || !token) return;
+    setFetching(true);
+    const days = PERIOD_DAYS[period];
+    const from = new Date(Date.now() - days * 86400_000).toISOString();
+    const to = new Date().toISOString();
+
+    Promise.all([
+      apiGet<StatsResponse>(`/v1/projects/${project.id}/stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, token),
+      apiGet<{ plan: string; tracesUsed: number; tracesLimit: number; usagePct: number }>(`/v1/projects/${project.id}/billing`, token),
+    ])
+      .then(([s, b]) => { setStats(s); setBilling(b); })
+      .catch(() => {})
+      .finally(() => setFetching(false));
+  }, [project, token, period]);
+
+  if (projectLoading || fetching || !stats || !billing) {
+    return (
+      <div className="fade-up">
+        <div className="page-h"><div><h1>Cost Explorer</h1><div className="sub">LLM spend breakdown by time, model, and agent.</div></div></div>
+        <div className="card card-pad muted" style={{ textAlign: "center" }}>Loading…</div>
+      </div>
+    );
+  }
+
+  const series = stats.dailyStats.map(d => ({ date: d.date, costUsd: Number(d.totalCostUsd) }));
+  const avgCostPerTrace = stats.totals.traceCount > 0 ? Number(stats.totals.totalCostUsd) / stats.totals.traceCount : 0;
+  const modelTotal = stats.costByModel.reduce((s, m) => s + Number(m.totalCostUsd), 0);
+  const agentTotal = stats.topAgents.reduce((s, a) => s + Number(a.totalCostUsd), 0);
+  const usagePct = billing.usagePct;
   const billingTone = usagePct > 0.9 ? "err" : usagePct > 0.7 ? "warn" : "ok";
-
-  const avgCostPerTrace = data.totals.traces > 0
-    ? data.totals.costUsd / data.totals.traces
-    : 0;
-
-  const modelTotal = data.byModel.reduce((s, m) => s + m.costUsd, 0);
-  const agentTotal = data.byAgent.reduce((s, a) => s + a.costUsd, 0);
+  const periodStart = new Date(Date.now() - PERIOD_DAYS[period] * 86400_000).toISOString().slice(0, 10);
+  const periodEnd = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="fade-up">
@@ -68,17 +103,17 @@ export default function CostExplorerPageClient() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "var(--gap-card, 14px)", marginBottom: 14 }}>
         <div className="card stat">
           <div className="stat-label">Total spend</div>
-          <div className="stat-value">{fmtMoney(data.totals.costUsd)}</div>
+          <div className="stat-value">{fmtMoney(stats.totals.totalCostUsd)}</div>
           <div className="mono muted-2" style={{ fontSize: 10.5 }}>{period} window</div>
         </div>
         <div className="card stat">
           <div className="stat-label">Tokens used</div>
-          <div className="stat-value">{fmtNum(data.totals.tokens)}</div>
+          <div className="stat-value">{fmtNum(stats.totals.totalTokens)}</div>
           <div className="mono muted-2" style={{ fontSize: 10.5 }}>all models</div>
         </div>
         <div className="card stat">
           <div className="stat-label">Traces billed</div>
-          <div className="stat-value">{fmtNum(data.totals.traces)}</div>
+          <div className="stat-value">{fmtNum(stats.totals.traceCount)}</div>
           <div className="mono muted-2" style={{ fontSize: 10.5 }}>LLM steps only</div>
         </div>
         <div className="card stat">
@@ -93,29 +128,29 @@ export default function CostExplorerPageClient() {
         <div className="card">
           <div className="hd"><h3>Daily spend</h3><span className="sub mono">{period} · USD</span></div>
           <div style={{ padding: "12px 18px 18px" }}>
-            <BarChart series={data.series}/>
+            <BarChart series={series}/>
           </div>
         </div>
 
         <div className="card">
-          <div className="hd"><h3>Plan usage</h3><span className="sub mono">{BILLING.periodStart} – {BILLING.periodEnd}</span></div>
+          <div className="hd"><h3>Plan usage</h3><span className="sub mono">{periodStart} – {periodEnd}</span></div>
           <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
             <div className="col" style={{ gap: 6 }}>
               <div className="row" style={{ justifyContent: "space-between", fontSize: 12 }}>
                 <span className="muted-2">Traces this month</span>
-                <span className="mono tnum">{fmtNum(BILLING.tracesUsed)} / {fmtNum(BILLING.tracesLimit)}</span>
+                <span className="mono tnum">{fmtNum(billing.tracesUsed)} / {fmtNum(billing.tracesLimit)}</span>
               </div>
-              <MeterBar used={BILLING.tracesUsed} limit={BILLING.tracesLimit} tone={billingTone}/>
+              <MeterBar used={billing.tracesUsed} limit={billing.tracesLimit} tone={billingTone}/>
               <div className="mono muted-2" style={{ fontSize: 10.5 }}>{(usagePct * 100).toFixed(1)}% of monthly quota</div>
             </div>
             <div className="hr"/>
             <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "8px 14px", fontSize: 11.5 }}>
               <span className="muted-2">Plan</span>
-              <span className="mono" style={{ textTransform: "capitalize" }}>{BILLING.plan}</span>
+              <span className="mono" style={{ textTransform: "capitalize" }}>{billing.plan}</span>
               <span className="muted-2">Period</span>
-              <span className="mono">{BILLING.periodStart}</span>
+              <span className="mono">{periodStart}</span>
               <span className="muted-2">Resets</span>
-              <span className="mono">{BILLING.periodEnd}</span>
+              <span className="mono">{periodEnd}</span>
             </div>
             <button className="btn btn-primary" style={{ width: "100%" }}>Upgrade plan</button>
           </div>
@@ -127,52 +162,56 @@ export default function CostExplorerPageClient() {
         <div className="card">
           <div className="hd"><h3>By model</h3><span className="sub mono">LLM cost attribution</span></div>
           <div>
-            {data.byModel.map((m, i) => {
-              const pct = modelTotal > 0 ? (m.costUsd / modelTotal) * 100 : 0;
+            {stats.costByModel.filter(m => m.model).map((m, i) => {
+              const cost = Number(m.totalCostUsd);
+              const pct = modelTotal > 0 ? (cost / modelTotal) * 100 : 0;
               return (
-                <div key={i} style={{ padding: "10px 16px", borderBottom: i < data.byModel.length - 1 ? "1px solid var(--border)" : "none" }}>
+                <div key={i} style={{ padding: "10px 16px", borderBottom: i < stats.costByModel.length - 1 ? "1px solid var(--border)" : "none" }}>
                   <div className="row" style={{ justifyContent: "space-between", marginBottom: 5 }}>
                     <span className="mono" style={{ fontSize: 12.5, fontWeight: 500 }}>{m.model}</span>
-                    <span className="mono tnum" style={{ fontSize: 12 }}>{fmtMoney(m.costUsd)}</span>
+                    <span className="mono tnum" style={{ fontSize: 12 }}>{fmtMoney(cost)}</span>
                   </div>
                   <div className="bar" style={{ height: 4, marginBottom: 4 }}>
-                    <div className="bar-fill" style={{ width: pct + "%", background: "var(--violet)"}}/>
+                    <div className="bar-fill" style={{ width: pct + "%", background: "var(--violet)" }}/>
                   </div>
                   <div className="row muted-2 mono" style={{ gap: 12, fontSize: 10.5 }}>
-                    <span>{fmtNum(m.tokens)} tok</span>
-                    <span>{fmtNum(m.calls)} calls</span>
+                    <span>{fmtNum(m.totalTokens)} tok</span>
+                    <span>{fmtNum(m.callCount)} calls</span>
                     <span>{pct.toFixed(1)}%</span>
                   </div>
                 </div>
               );
             })}
+            {stats.costByModel.length === 0 && <div className="muted" style={{ padding: 24, textAlign: "center" }}>No LLM calls yet.</div>}
           </div>
         </div>
 
         <div className="card">
           <div className="hd"><h3>By agent</h3><span className="sub mono">agent cost attribution</span></div>
           <div>
-            {data.byAgent.map((a, i) => {
-              const pct = agentTotal > 0 ? (a.costUsd / agentTotal) * 100 : 0;
+            {stats.topAgents.map((a, i) => {
+              const cost = Number(a.totalCostUsd);
+              const pct = agentTotal > 0 ? (cost / agentTotal) * 100 : 0;
               return (
-                <div key={i} style={{ padding: "10px 16px", borderBottom: i < data.byAgent.length - 1 ? "1px solid var(--border)" : "none" }}>
+                <div key={i} style={{ padding: "10px 16px", borderBottom: i < stats.topAgents.length - 1 ? "1px solid var(--border)" : "none" }}>
                   <div className="row" style={{ justifyContent: "space-between", marginBottom: 5 }}>
                     <span className="mono" style={{ fontSize: 12.5, fontWeight: 500 }}>{a.agentId}</span>
-                    <span className="mono tnum" style={{ fontSize: 12 }}>{fmtMoney(a.costUsd)}</span>
+                    <span className="mono tnum" style={{ fontSize: 12 }}>{fmtMoney(cost)}</span>
                   </div>
                   <div className="bar" style={{ height: 4, marginBottom: 4 }}>
-                    <div className="bar-fill" style={{ width: pct + "%", background: "var(--accent)"}}/>
+                    <div className="bar-fill" style={{ width: pct + "%", background: "var(--accent)" }}/>
                   </div>
                   <div className="row muted-2 mono" style={{ gap: 12, fontSize: 10.5 }}>
-                    <span>{fmtNum(a.traces)} traces</span>
-                    <span>{fmtNum(a.tokens)} tok</span>
-                    <span style={{ color: a.errorRate > 0.02 ? "var(--error)" : "var(--text-3)" }}>
-                      {(a.errorRate * 100).toFixed(1)}% err
+                    <span>{fmtNum(a.traceCount)} traces</span>
+                    <span>{fmtNum(a.totalTokens)} tok</span>
+                    <span style={{ color: (a.errorRate ?? 0) > 0.02 ? "var(--error)" : "var(--text-3)" }}>
+                      {((a.errorRate ?? 0) * 100).toFixed(1)}% err
                     </span>
                   </div>
                 </div>
               );
             })}
+            {stats.topAgents.length === 0 && <div className="muted" style={{ padding: 24, textAlign: "center" }}>No traces yet.</div>}
           </div>
         </div>
       </div>
