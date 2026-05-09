@@ -6,8 +6,8 @@ import { organizations } from "../db/schema.js";
 
 export interface ClerkAuthedRequest extends Request {
   clerkUserId: string;
-  clerkOrgId: string | null; // Active Clerk org ID from JWT claims
-  dbOrgId: string | null;    // Resolved internal UUID from organizations table
+  clerkOrgId: string | null;
+  dbOrgId: string | null;
 }
 
 export async function clerkSessionAuth(

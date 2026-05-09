@@ -40,7 +40,6 @@ export async function startIngestConsumer(
       continue;
     }
 
-    // The ingest route attaches projectId before queuing
     const payload = parsed.data as typeof parsed.data & {
       projectId: string;
       traceId: string;
@@ -51,7 +50,6 @@ export async function startIngestConsumer(
 
     try {
       await db.transaction(async (tx) => {
-        // ── 1. Compute costs for each step ────────────────────────────────
         let totalComputedCostUsd = 0;
         let totalComputedTokens = 0;
 
@@ -60,7 +58,6 @@ export async function startIngestConsumer(
           const completionTokens = step.tokenUsage?.completion ?? 0;
           const totalTokens = step.tokenUsage?.total ?? promptTokens + completionTokens;
 
-          // Use SDK-provided cost if present, otherwise compute from model pricing
           let costUsd = step.costUsd ?? null;
           if (
             costUsd === null &&
@@ -101,7 +98,6 @@ export async function startIngestConsumer(
         const finalTokens =
           payload.totalTokens ?? (totalComputedTokens > 0 ? totalComputedTokens : null);
 
-        // ── 2. Upsert trace ────────────────────────────────────────────────
         await tx.insert(traces).values({
           id: traceId,
           projectId: payload.projectId,
@@ -117,12 +113,10 @@ export async function startIngestConsumer(
           endedAt: payload.status !== "running" ? new Date() : null,
         });
 
-        // ── 3. Insert trace steps ─────────────────────────────────────────
         if (enrichedSteps.length > 0) {
           await tx.insert(traceSteps).values(enrichedSteps);
         }
 
-        // ── 4. Auto-discover tools — upsert unknown tool slugs ────────────
         const toolNames = [
           ...new Set(
             payload.steps
@@ -143,7 +137,7 @@ export async function startIngestConsumer(
             .onConflictDoNothing();
         }
       });
-      // ── 5. Fire cost-spike webhooks if threshold exceeded ────────────
+
       if (committedCostUsd !== null && committedCostUsd >= COST_SPIKE_THRESHOLD_USD) {
         fireCostSpikeWebhooks(db, payload.projectId, {
           traceId,
@@ -196,7 +190,6 @@ async function fireCostSpikeWebhooks(
 
   const eligible = targets.filter((t) => {
     if (!t.events?.includes("cost_spike")) return false;
-    // Defense-in-depth: re-validate scheme even if schema already enforces it
     try {
       const parsed = new URL(t.url);
       if (parsed.protocol !== "https:") {

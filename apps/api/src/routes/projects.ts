@@ -20,10 +20,6 @@ async function flexAuth(req: Request, res: Response, next: NextFunction): Promis
   return clerkSessionAuth(req, res, next);
 }
 
-/**
- * Verify the requesting Clerk user is a member of the org that owns `/:id`.
- * Uses the path param `id` as the project ID.
- */
 async function resolveProjectFromClerk(req: Request, res: Response): Promise<string | null> {
   const authed = req as ClerkAuthedRequest;
   const { id } = req.params as { id: string };
@@ -43,7 +39,6 @@ async function resolveProjectFromClerk(req: Request, res: Response): Promise<str
   return row.projectId;
 }
 
-// GET /v1/projects — list projects for the authenticated Clerk user
 router.get(
   "/",
   rateLimiter,
@@ -64,7 +59,6 @@ router.get(
   },
 );
 
-// POST /v1/projects — create a new project
 router.post(
   "/",
   rateLimiter,
@@ -75,8 +69,7 @@ router.post(
     if (!authed.dbOrgId) {
       res.status(400).json({
         error: "no_active_org",
-        message:
-          "Set an active Clerk organization in your session before creating a project.",
+        message: "Set an active Clerk organization in your session before creating a project.",
       });
       return;
     }
@@ -105,7 +98,6 @@ router.post(
   },
 );
 
-// GET /v1/projects/:id/stats — aggregated cost/tokens/traces by day
 router.get(
   "/:id/stats",
   rateLimiter,
@@ -200,7 +192,6 @@ router.get(
   },
 );
 
-// GET /v1/projects/:id/api-keys — list API keys for a project
 router.get(
   "/:id/api-keys",
   rateLimiter,
@@ -238,7 +229,6 @@ router.get(
   },
 );
 
-// POST /v1/projects/:id/api-keys — create a named API key
 router.post(
   "/:id/api-keys",
   rateLimiter,
@@ -284,7 +274,6 @@ router.post(
   },
 );
 
-// DELETE /v1/projects/:id/api-keys/:keyId — revoke a key
 router.delete(
   "/:id/api-keys/:keyId",
   rateLimiter,
@@ -320,7 +309,6 @@ router.delete(
   },
 );
 
-// GET /v1/projects/:id/billing — plan + monthly usage
 router.get(
   "/:id/billing",
   rateLimiter,
@@ -365,7 +353,6 @@ router.get(
   },
 );
 
-// GET /v1/projects/:id/webhooks — list webhooks for a project
 router.get(
   "/:id/webhooks",
   rateLimiter,

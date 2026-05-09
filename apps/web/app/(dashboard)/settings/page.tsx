@@ -111,10 +111,9 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Billing card */}
       {billing && (
         <div className="card" style={{ marginBottom: 14 }}>
-          <div className="hd"><h3>Billing & plan</h3>
+          <div className="hd"><h3>Billing &amp; plan</h3>
             <Badge tone={PLAN_COLORS[billing.plan] as "violet" | "ok" | "info"}>{billing.plan}</Badge>
           </div>
           <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -146,7 +145,6 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Project info */}
       {project && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="hd"><h3>Project</h3></div>
@@ -158,7 +156,6 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* API keys */}
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="hd">
           <h3>API keys</h3>
@@ -197,7 +194,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Webhooks */}
       <div className="card">
         <div className="hd"><h3>Webhooks</h3><span className="sub mono">cost spikes · errors · completions</span></div>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>

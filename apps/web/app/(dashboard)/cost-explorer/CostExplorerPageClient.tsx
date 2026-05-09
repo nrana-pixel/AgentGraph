@@ -99,7 +99,6 @@ export default function CostExplorerPageClient() {
         </div>
       </div>
 
-      {/* Summary stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "var(--gap-card, 14px)", marginBottom: 14 }}>
         <div className="card stat">
           <div className="stat-label">Total spend</div>
@@ -123,7 +122,6 @@ export default function CostExplorerPageClient() {
         </div>
       </div>
 
-      {/* Daily chart + billing card */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "var(--gap-card, 14px)", marginBottom: 14 }}>
         <div className="card">
           <div className="hd"><h3>Daily spend</h3><span className="sub mono">{period} · USD</span></div>
@@ -157,7 +155,6 @@ export default function CostExplorerPageClient() {
         </div>
       </div>
 
-      {/* Model + Agent breakdown */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--gap-card, 14px)" }}>
         <div className="card">
           <div className="hd"><h3>By model</h3><span className="sub mono">LLM cost attribution</span></div>

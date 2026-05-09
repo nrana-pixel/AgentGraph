@@ -37,7 +37,6 @@ async function resolveProjectFromClerk(req: Request, res: Response): Promise<str
   return row.projectId;
 }
 
-// POST /v1/projects/:projectId/webhooks
 router.post(
   "/:projectId/webhooks",
   rateLimiter,
@@ -79,7 +78,6 @@ router.post(
   },
 );
 
-// PATCH /v1/projects/:projectId/webhooks/:webhookId — toggle enabled
 router.patch(
   "/:projectId/webhooks/:webhookId",
   rateLimiter,
@@ -121,7 +119,6 @@ router.patch(
   },
 );
 
-// DELETE /v1/projects/:projectId/webhooks/:webhookId
 router.delete(
   "/:projectId/webhooks/:webhookId",
   rateLimiter,
