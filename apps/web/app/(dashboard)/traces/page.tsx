@@ -6,21 +6,11 @@ import { StatusBadge, EnvBadge } from "@/components/ui/primitives";
 import { IconExt, IconChev } from "@/components/ui/icons";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
-
-interface Trace {
-  id: string;
-  agentId: string;
-  env: string;
-  status: "running" | "completed" | "error";
-  totalLatencyMs: number | null;
-  totalTokens: number | null;
-  totalCostUsd: string | null;
-  startedAt: string;
-}
+import type { TraceRow } from "@agentgraph/types";
 
 export default function TracesPage() {
   const { project, token, loading: projectLoading } = useProject();
-  const [traces, setTraces] = useState<Trace[]>([]);
+  const [traces, setTraces] = useState<TraceRow[]>([]);
   const [agentFilter, setAgentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [envFilter, setEnvFilter] = useState("");
@@ -32,7 +22,7 @@ export default function TracesPage() {
   useEffect(() => {
     if (!project || !token) return;
     setFetching(true);
-    apiGet<{ traces: Trace[] }>(`/v1/traces?projectId=${project.id}&limit=100`, token)
+    apiGet<{ traces: TraceRow[] }>(`/v1/traces?projectId=${project.id}&limit=100`, token)
       .then(data => setTraces(data.traces))
       .catch(() => {})
       .finally(() => setFetching(false));

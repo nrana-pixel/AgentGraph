@@ -60,3 +60,36 @@ export const IngestResponseSchema = z.object({
   status: z.literal("queued"),
 });
 export type IngestResponse = z.infer<typeof IngestResponseSchema>;
+
+export const TraceRowSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string(),
+  env: z.string(),
+  status: TraceStatusSchema,
+  totalLatencyMs: z.number().nullable(),
+  totalTokens: z.number().nullable(),
+  totalCostUsd: z.string().nullable(),
+  startedAt: z.string(),
+});
+export type TraceRow = z.infer<typeof TraceRowSchema>;
+
+export const TraceStepRowSchema = z.object({
+  id: z.string().uuid(),
+  traceId: z.string().uuid(),
+  stepIndex: z.number(),
+  type: StepTypeSchema,
+  name: z.string(),
+  input: z.string().nullable(),
+  output: z.string().nullable(),
+  latencyMs: z.number().nullable(),
+  promptTokens: z.number().nullable(),
+  completionTokens: z.number().nullable(),
+  totalTokens: z.number().nullable(),
+  costUsd: z.string().nullable(),
+  error: z.string().nullable(),
+  model: z.string().nullable(),
+  toolName: z.string().nullable(),
+  toolVersion: z.string().nullable(),
+  timestamp: z.string(),
+});
+export type TraceStepRow = z.infer<typeof TraceStepRowSchema>;

@@ -7,28 +7,7 @@ import { Badge, ToolIcon } from "@/components/ui/primitives";
 import { IconSearch } from "@/components/ui/icons";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
-
-interface ApiTool {
-  slug: string;
-  name: string;
-  category: string;
-  description: string | null;
-  website: string | null;
-  docsUrl: string | null;
-  githubUrl: string | null;
-  isOpenSource: boolean;
-  isSelfHostable: boolean;
-  pricingModel: string | null;
-  dataResidency: string[] | null;
-  tags: string[] | null;
-  dataSource: string;
-  sentimentScore: string | null;
-  successRate: string | null;
-  avgLatencyMs: number | null;
-  p95LatencyMs: number | null;
-  totalCalls: number | null;
-  popularityScore: string | null;
-}
+import type { ToolListItem } from "@agentgraph/types";
 
 function Metric({ label, value, color }: { label: string; value: string; color: string }) {
   return (
@@ -41,7 +20,7 @@ function Metric({ label, value, color }: { label: string; value: string; color: 
 
 export default function ToolsPage() {
   const { token, loading: projectLoading } = useProject();
-  const [tools, setTools] = useState<ApiTool[]>([]);
+  const [tools, setTools] = useState<ToolListItem[]>([]);
   const [cat, setCat] = useState("");
   const [q, setQ] = useState("");
   const [pricing, setPricing] = useState("");
@@ -53,7 +32,7 @@ export default function ToolsPage() {
   useEffect(() => {
     if (!token) return;
     setFetching(true);
-    apiGet<{ tools: ApiTool[] }>("/v1/tools?limit=100", token)
+    apiGet<{ tools: ToolListItem[] }>("/v1/tools?limit=100", token)
       .then(data => setTools(data.tools))
       .catch(() => {})
       .finally(() => setFetching(false));
