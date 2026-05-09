@@ -61,21 +61,15 @@ export const IngestResponseSchema = z.object({
 });
 export type IngestResponse = z.infer<typeof IngestResponseSchema>;
 
-// API response shapes — rows returned by GET /v1/traces and GET /v1/traces/:id
 export const TraceRowSchema = z.object({
   id: z.string().uuid(),
-  projectId: z.string().uuid(),
   agentId: z.string(),
-  sessionId: z.string().nullable(),
-  userId: z.string().nullable(),
   env: z.string(),
   status: TraceStatusSchema,
   totalLatencyMs: z.number().nullable(),
   totalTokens: z.number().nullable(),
   totalCostUsd: z.string().nullable(),
-  metadata: z.string(),
   startedAt: z.string(),
-  endedAt: z.string().nullable(),
 });
 export type TraceRow = z.infer<typeof TraceRowSchema>;
 

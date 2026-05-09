@@ -116,7 +116,6 @@ export const RecommendResponseSchema = z.object({
 });
 export type RecommendResponse = z.infer<typeof RecommendResponseSchema>;
 
-// API list response shape — tool joined with global stats (nullable due to left join)
 export const ToolListItemSchema = z.object({
   slug: z.string(),
   name: z.string(),
