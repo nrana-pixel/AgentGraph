@@ -49,7 +49,13 @@ export const WebhookEventSchema = z.enum([
 export type WebhookEvent = z.infer<typeof WebhookEventSchema>;
 
 export const CreateWebhookSchema = z.object({
-  url: z.string().url(),
+  url: z
+    .string()
+    .url()
+    .refine(
+      (u) => new URL(u).protocol === "https:",
+      { message: "Webhook URL must use https" },
+    ),
   events: z.array(WebhookEventSchema).min(1),
 });
 

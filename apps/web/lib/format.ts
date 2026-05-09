@@ -5,9 +5,9 @@ export function fmtNum(n: number | null | undefined): string {
   return String(n);
 }
 
-export function fmtMoney(s: string | null | undefined): string {
+export function fmtMoney(s: string | number | null | undefined): string {
   if (s == null) return "—";
-  const n = parseFloat(s);
+  const n = typeof s === "number" ? s : parseFloat(s);
   if (n < 0.01) return "$" + n.toFixed(4);
   if (n < 1) return "$" + n.toFixed(3);
   return "$" + n.toFixed(2);
