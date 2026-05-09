@@ -1,15 +1,17 @@
 "use client";
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { TRACES_DATA, makeStepsForTrace } from "@/lib/data";
 import { fmtMs, fmtNum, fmtMoney, relTime } from "@/lib/format";
 import { Badge, StatusBadge, EnvBadge, JsonView } from "@/components/ui/primitives";
 import { IconCopy, IconExt, IconSearch } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/toast";
+import { useProject } from "@/hooks/useProject";
+import { apiGet } from "@/lib/api";
+import type { TraceRow, TraceStepRow } from "@agentgraph/types";
 
 type VizStyle = "bars" | "flame" | "timeline";
 
-function BarsViz({ steps, totalLat, active, setActive }: { steps: ReturnType<typeof makeStepsForTrace>; totalLat: number; active: number; setActive: (i: number) => void }) {
+function BarsViz({ steps, totalLat, active, setActive }: { steps: TraceStepRow[]; totalLat: number; active: number; setActive: (i: number) => void }) {
   let cursor = 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -29,7 +31,7 @@ function BarsViz({ steps, totalLat, active, setActive }: { steps: ReturnType<typ
             <div className="wf-bar-track">
               <div className="wf-bar" data-type={s.type} data-error={s.error ? "true" : "false"} style={{ left: left + "%", width: width + "%" }}/>
             </div>
-            <div className="wf-lat">{fmtMs(s.latencyMs)}</div>
+            <div className="wf-lat">{fmtMs(s.latencyMs ?? undefined)}</div>
           </div>
         );
       })}
@@ -37,7 +39,7 @@ function BarsViz({ steps, totalLat, active, setActive }: { steps: ReturnType<typ
   );
 }
 
-function FlameViz({ steps, totalLat, active, setActive }: { steps: ReturnType<typeof makeStepsForTrace>; totalLat: number; active: number; setActive: (i: number) => void }) {
+function FlameViz({ steps, totalLat, active, setActive }: { steps: TraceStepRow[]; totalLat: number; active: number; setActive: (i: number) => void }) {
   let cursor = 0;
   const lanes = ["llm_call", "tool_call", "retrieval", "human", "custom"];
   const colorOf = (t: string, err: string | null) => err ? "var(--error)" : t === "llm_call" ? "var(--violet)" : t === "tool_call" ? "var(--accent)" : t === "retrieval" ? "var(--info)" : "var(--success)";
@@ -68,7 +70,7 @@ function FlameViz({ steps, totalLat, active, setActive }: { steps: ReturnType<ty
   );
 }
 
-function TimelineViz({ steps, totalLat, active, setActive }: { steps: ReturnType<typeof makeStepsForTrace>; totalLat: number; active: number; setActive: (i: number) => void }) {
+function TimelineViz({ steps, totalLat, active, setActive }: { steps: TraceStepRow[]; totalLat: number; active: number; setActive: (i: number) => void }) {
   let cursor = 0;
   return (
     <div style={{ position: "relative", padding: "8px 8px 8px 80px" }}>
@@ -85,7 +87,7 @@ function TimelineViz({ steps, totalLat, active, setActive }: { steps: ReturnType
               <Badge tone={s.error ? "err" : s.type === "llm_call" ? "violet" : "warn"}>{s.type.replace("_", " ")}</Badge>
               <b className="mono" style={{ fontSize: 12.5 }}>{s.name}</b>
               <div className="spacer"/>
-              <span className="mono muted" style={{ fontSize: 11 }}>{fmtMs(s.latencyMs)}</span>
+              <span className="mono muted" style={{ fontSize: 11 }}>{fmtMs(s.latencyMs ?? undefined)}</span>
             </div>
             <div className="row" style={{ gap: 12, fontSize: 11, color: "var(--text-2)", fontFamily: "var(--font-mono)" }}>
               {s.model && <span>{s.model}</span>}
@@ -103,10 +105,10 @@ function TimelineViz({ steps, totalLat, active, setActive }: { steps: ReturnType
 export default function TraceDetailPageClient({ id }: { id: string }) {
   const router = useRouter();
   const toast = useToast();
-  const traceIdx = TRACES_DATA.findIndex(t => t.id === id);
-  const trace = TRACES_DATA[traceIdx];
-  const prevTrace = traceIdx > 0 ? TRACES_DATA[traceIdx - 1] : null;
-  const nextTrace = traceIdx >= 0 && traceIdx < TRACES_DATA.length - 1 ? TRACES_DATA[traceIdx + 1] : null;
+  const { project, token, loading: projectLoading } = useProject();
+  const [data, setData] = useState<{ trace: TraceRow; steps: TraceStepRow[] } | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [notFound, setNotFound] = useState(false);
 
   const [activeStep, setActiveStep] = useState(0);
   const [viz, setViz] = useState<VizStyle>("bars");
@@ -114,16 +116,28 @@ export default function TraceDetailPageClient({ id }: { id: string }) {
   const [typeFilter, setTypeFilter] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
 
-  const steps = useMemo(() => trace ? makeStepsForTrace(trace, traceIdx) : [], [id]);
+  useEffect(() => {
+    if (!project || !token) return;
+    setFetching(true);
+    setNotFound(false);
+    apiGet<{ trace: TraceRow; steps: TraceStepRow[] }>(`/v1/traces/${id}?projectId=${project.id}`, token)
+      .then(d => setData(d))
+      .catch(() => setNotFound(true))
+      .finally(() => setFetching(false));
+  }, [id, project, token]);
+
+  const trace = data?.trace ?? null;
+  const steps = data?.steps ?? [];
   const totalLat = steps.reduce((a, s) => a + (s.latencyMs || 0), 0);
   const meta = (() => { try { return JSON.parse(trace?.metadata ?? "{}"); } catch { return {}; } })();
 
-  const filteredSteps = steps.filter(s => {
+  const filteredSteps = useMemo(() => steps.filter(s => {
     if (typeFilter && s.type !== typeFilter) return false;
     if (errorsOnly && !s.error) return false;
     if (stepFilter && !(s.name + " " + (s.toolName ?? "") + " " + (s.model ?? "")).toLowerCase().includes(stepFilter.toLowerCase())) return false;
     return true;
-  });
+  }), [steps, typeFilter, errorsOnly, stepFilter]);
+
   const active = steps[activeStep] ?? steps[0];
 
   useEffect(() => {
@@ -133,22 +147,31 @@ export default function TraceDetailPageClient({ id }: { id: string }) {
       if (e.metaKey || e.ctrlKey) return;
       if (e.key === "j") { e.preventDefault(); setActiveStep(i => Math.min(steps.length - 1, i + 1)); }
       else if (e.key === "k") { e.preventDefault(); setActiveStep(i => Math.max(0, i - 1)); }
-      else if (e.key === "[" && prevTrace) { e.preventDefault(); router.push("/traces/" + prevTrace.id); }
-      else if (e.key === "]" && nextTrace) { e.preventDefault(); router.push("/traces/" + nextTrace.id); }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [steps.length, prevTrace?.id, nextTrace?.id]);
+  }, [steps.length]);
 
-  if (!trace) return (
-    <div className="fade-up">
-      <div className="page-h"><h1>Trace not found</h1></div>
-      <div className="card card-pad muted">No trace with id <code className="mono">{id}</code>. <button className="btn btn-sm" onClick={() => router.push("/traces")} style={{ marginLeft: 8 }}>Back</button></div>
-    </div>
-  );
+  if (projectLoading || fetching) {
+    return (
+      <div className="fade-up">
+        <div className="page-h"><div><button className="btn btn-ghost btn-sm" onClick={() => router.push("/traces")}>← Traces</button></div></div>
+        <div className="card card-pad muted" style={{ textAlign: "center" }}>Loading…</div>
+      </div>
+    );
+  }
+
+  if (notFound || !trace) {
+    return (
+      <div className="fade-up">
+        <div className="page-h"><h1>Trace not found</h1></div>
+        <div className="card card-pad muted">No trace with id <code className="mono">{id}</code>. <button className="btn btn-sm" onClick={() => router.push("/traces")} style={{ marginLeft: 8 }}>Back</button></div>
+      </div>
+    );
+  }
 
   const copyId = () => { navigator.clipboard?.writeText?.(trace.id); toast("Trace ID copied"); };
-  const copyAsCurl = (s: ReturnType<typeof makeStepsForTrace>[0]) => {
+  const copyAsCurl = (s: TraceStepRow) => {
     const body = s.input ?? "{}";
     const curl = `curl -X POST https://api.${s.toolName ?? "tool"}.com/v1/${s.name} \\\n  -H "Authorization: Bearer $TOKEN" \\\n  -H "Content-Type: application/json" \\\n  -d '${body}'`;
     navigator.clipboard?.writeText?.(curl);
@@ -174,8 +197,6 @@ export default function TraceDetailPageClient({ id }: { id: string }) {
           </div>
         </div>
         <div className="row">
-          <button className="btn btn-ghost btn-sm" disabled={!prevTrace} onClick={() => prevTrace && router.push("/traces/" + prevTrace.id)} title="Previous trace ([)">←</button>
-          <button className="btn btn-ghost btn-sm" disabled={!nextTrace} onClick={() => nextTrace && router.push("/traces/" + nextTrace.id)} title="Next trace (])">→</button>
           <button className="btn" onClick={copyId}><IconCopy/> Copy ID</button>
           <button className="btn"><IconExt/> Open in Notebook</button>
         </div>
@@ -237,8 +258,8 @@ export default function TraceDetailPageClient({ id }: { id: string }) {
             <div style={{ padding: "10px 16px 16px", display: "grid", gridTemplateColumns: "auto 1fr", gap: "8px 14px", fontSize: 12 }}>
               <span className="muted-2">session</span><span className="mono">{trace.sessionId ?? "—"}</span>
               <span className="muted-2">user</span><span className="mono">{trace.userId ?? "—"}</span>
-              <span className="muted-2">source</span><span className="mono">{meta.source ?? "—"}</span>
-              <span className="muted-2">version</span><span className="mono">{meta.version ?? "—"}</span>
+              <span className="muted-2">source</span><span className="mono">{(meta as Record<string, string>).source ?? "—"}</span>
+              <span className="muted-2">version</span><span className="mono">{(meta as Record<string, string>).version ?? "—"}</span>
               <span className="muted-2">started</span><span className="mono">{new Date(trace.startedAt).toLocaleTimeString()}</span>
               <span className="muted-2">ended</span><span className="mono">{trace.endedAt ? new Date(trace.endedAt).toLocaleTimeString() : "—"}</span>
             </div>
@@ -254,7 +275,7 @@ export default function TraceDetailPageClient({ id }: { id: string }) {
                 {active.type === "tool_call" && <button className="btn btn-ghost btn-sm" onClick={() => copyAsCurl(active)} title="Copy as cURL"><IconCopy/> cURL</button>}
               </div>
               <div style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 12px", fontSize: 11.5 }}>
-                <span className="muted-2">latency</span><span className="mono">{fmtMs(active.latencyMs)}</span>
+                <span className="muted-2">latency</span><span className="mono">{fmtMs(active.latencyMs ?? undefined)}</span>
                 {active.model && (<><span className="muted-2">model</span><span className="mono">{active.model}</span></>)}
                 {active.toolName && (<><span className="muted-2">tool</span><span className="mono">{active.toolName} <span className="muted-2">v{active.toolVersion}</span></span></>)}
                 {active.totalTokens != null && (<><span className="muted-2">tokens</span><span className="mono">{active.promptTokens} → {active.completionTokens} ({active.totalTokens})</span></>)}
