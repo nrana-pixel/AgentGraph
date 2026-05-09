@@ -1,22 +1,15 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request, type Response } from "express";
 import { randomBytes } from "crypto";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { webhooks, projects, organizations, orgMembers, users } from "../db/schema.js";
-import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
-import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
+import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
+import { type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
+import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { CreateWebhookSchema } from "@agentgraph/types";
 
 const router = Router();
-
-async function flexAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const bearer = req.headers["authorization"]?.slice(7) ?? "";
-  if (bearer.startsWith("ag_")) {
-    return apiKeyAuth(req, res, next);
-  }
-  return clerkSessionAuth(req, res, next);
-}
 
 async function resolveProjectFromClerk(req: Request, res: Response): Promise<string | null> {
   const authed = req as ClerkAuthedRequest;
@@ -37,7 +30,6 @@ async function resolveProjectFromClerk(req: Request, res: Response): Promise<str
   return row.projectId;
 }
 
-// POST /v1/projects/:projectId/webhooks
 router.post(
   "/:projectId/webhooks",
   rateLimiter,
@@ -79,7 +71,6 @@ router.post(
   },
 );
 
-// PATCH /v1/projects/:projectId/webhooks/:webhookId — toggle enabled
 router.patch(
   "/:projectId/webhooks/:webhookId",
   rateLimiter,
@@ -121,7 +112,6 @@ router.patch(
   },
 );
 
-// DELETE /v1/projects/:projectId/webhooks/:webhookId
 router.delete(
   "/:projectId/webhooks/:webhookId",
   rateLimiter,

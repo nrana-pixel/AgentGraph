@@ -1,32 +1,15 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { traces, traceSteps, projects, organizations, orgMembers, users } from "../db/schema.js";
-import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
-import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
+import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
+import { type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
+import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { TraceListFilterSchema } from "@agentgraph/types";
 
 const router = Router();
 
-/**
- * Flexible auth: API keys (SDK clients) use apiKeyAuth; Clerk session tokens
- * (dashboard server components) use clerkSessionAuth.
- * API keys start with "ag_"; anything else is treated as a Clerk JWT.
- */
-async function flexAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const bearer = req.headers["authorization"]?.slice(7) ?? "";
-  if (bearer.startsWith("ag_")) {
-    return apiKeyAuth(req, res, next);
-  }
-  return clerkSessionAuth(req, res, next);
-}
-
-/**
- * Resolve the projectId for a Clerk-authenticated dashboard request.
- * Requires a `projectId` query param; verifies the user is an org member
- * that owns the requested project.
- */
 async function resolveProjectFromClerk(
   req: Request,
   res: Response,
@@ -39,7 +22,6 @@ async function resolveProjectFromClerk(
     return null;
   }
 
-  // Verify this project belongs to an org the clerk user is a member of
   const [row] = await db
     .select({ projectId: projects.id })
     .from(projects)
@@ -61,7 +43,6 @@ async function resolveProjectFromClerk(
   return row.projectId;
 }
 
-// GET /v1/traces — list traces for a project
 router.get(
   "/",
   rateLimiter,
@@ -73,7 +54,6 @@ router.get(
       return;
     }
 
-    // Determine projectId from either apiKeyAuth or Clerk session
     let projectId: string;
     if ((req as AuthedRequest).projectId) {
       projectId = (req as AuthedRequest).projectId;
@@ -105,7 +85,6 @@ router.get(
   },
 );
 
-// GET /v1/traces/:id — get a single trace with all steps
 router.get(
   "/:id",
   rateLimiter,
@@ -113,7 +92,6 @@ router.get(
   async (req: Request, res: Response): Promise<void> => {
     const { id } = req.params as { id: string };
 
-    // Determine projectId from either apiKeyAuth or Clerk session
     let projectId: string;
     if ((req as AuthedRequest).projectId) {
       projectId = (req as AuthedRequest).projectId;

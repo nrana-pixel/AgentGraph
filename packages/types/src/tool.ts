@@ -115,3 +115,27 @@ export const RecommendResponseSchema = z.object({
   dataFreshness: z.string().datetime(),
 });
 export type RecommendResponse = z.infer<typeof RecommendResponseSchema>;
+
+// API list response shape — tool joined with global stats (nullable due to left join)
+export const ToolListItemSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  category: z.string(),
+  description: z.string().nullable(),
+  website: z.string().nullable(),
+  docsUrl: z.string().nullable(),
+  githubUrl: z.string().nullable(),
+  isOpenSource: z.boolean(),
+  isSelfHostable: z.boolean(),
+  pricingModel: z.string().nullable(),
+  dataResidency: z.array(z.string()).nullable(),
+  tags: z.array(z.string()).nullable(),
+  dataSource: z.string(),
+  sentimentScore: z.string().nullable(),
+  successRate: z.string().nullable(),
+  avgLatencyMs: z.number().nullable(),
+  p95LatencyMs: z.number().nullable(),
+  totalCalls: z.number().nullable(),
+  popularityScore: z.string().nullable(),
+});
+export type ToolListItem = z.infer<typeof ToolListItemSchema>;
