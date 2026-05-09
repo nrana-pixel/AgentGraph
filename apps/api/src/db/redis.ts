@@ -11,7 +11,7 @@ export const redis = new Redis(redisUrl, {
   lazyConnect: false,
 });
 
-redis.on("error", (err) => {
+redis.on("error", (err: Error) => {
   console.error("[redis] connection error:", err);
 });
 

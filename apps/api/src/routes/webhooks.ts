@@ -2,25 +2,52 @@ import { Router, type Request, type Response } from "express";
 import { randomBytes } from "crypto";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { webhooks } from "../db/schema.js";
-import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
+import { webhooks, projects, organizations, orgMembers, users } from "../db/schema.js";
+import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
+import { type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
+import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { CreateWebhookSchema } from "@agentgraph/types";
 
 const router = Router();
 
-// POST /v1/projects/:projectId/webhooks
+async function resolveProjectFromClerk(req: Request, res: Response): Promise<string | null> {
+  const authed = req as ClerkAuthedRequest;
+  const { projectId } = req.params as { projectId: string };
+
+  const [row] = await db
+    .select({ projectId: projects.id })
+    .from(projects)
+    .innerJoin(organizations, eq(projects.orgId, organizations.id))
+    .innerJoin(orgMembers, eq(organizations.id, orgMembers.orgId))
+    .innerJoin(users, eq(orgMembers.userId, users.id))
+    .where(and(eq(projects.id, projectId), eq(users.clerkId, authed.clerkUserId)));
+
+  if (!row) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return row.projectId;
+}
+
 router.post(
   "/:projectId/webhooks",
   rateLimiter,
-  apiKeyAuth,
+  flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const authed = req as AuthedRequest;
     const { projectId } = req.params as { projectId: string };
 
-    if (projectId !== authed.projectId) {
-      res.status(403).json({ error: "forbidden" });
-      return;
+    let resolvedProjectId: string;
+    if ((req as AuthedRequest).projectId) {
+      if ((req as AuthedRequest).projectId !== projectId) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      resolvedProjectId = projectId;
+    } else {
+      const resolved = await resolveProjectFromClerk(req, res);
+      if (!resolved) return;
+      resolvedProjectId = resolved;
     }
 
     const parsed = CreateWebhookSchema.safeParse(req.body);
@@ -32,12 +59,7 @@ router.post(
     const secret = randomBytes(32).toString("hex");
     const [webhook] = await db
       .insert(webhooks)
-      .values({
-        projectId,
-        url: parsed.data.url,
-        events: parsed.data.events,
-        secret,
-      })
+      .values({ projectId: resolvedProjectId, url: parsed.data.url, events: parsed.data.events, secret })
       .returning();
 
     if (!webhook) {
@@ -45,32 +67,74 @@ router.post(
       return;
     }
 
-    res.status(201).json({ ...webhook, secret }); // Return secret once
+    res.status(201).json({ ...webhook, secret });
   },
 );
 
-// DELETE /v1/projects/:projectId/webhooks/:webhookId
+router.patch(
+  "/:projectId/webhooks/:webhookId",
+  rateLimiter,
+  flexAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const { projectId, webhookId } = req.params as { projectId: string; webhookId: string };
+
+    let resolvedProjectId: string;
+    if ((req as AuthedRequest).projectId) {
+      if ((req as AuthedRequest).projectId !== projectId) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      resolvedProjectId = projectId;
+    } else {
+      const resolved = await resolveProjectFromClerk(req, res);
+      if (!resolved) return;
+      resolvedProjectId = resolved;
+    }
+
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ error: "validation_error", message: "enabled must be a boolean" });
+      return;
+    }
+
+    const updated = await db
+      .update(webhooks)
+      .set({ enabled })
+      .where(and(eq(webhooks.id, webhookId), eq(webhooks.projectId, resolvedProjectId)))
+      .returning({ id: webhooks.id, enabled: webhooks.enabled });
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: "webhook_not_found" });
+      return;
+    }
+
+    res.json(updated[0]);
+  },
+);
+
 router.delete(
   "/:projectId/webhooks/:webhookId",
   rateLimiter,
-  apiKeyAuth,
+  flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const authed = req as AuthedRequest;
-    const { projectId, webhookId } = req.params as {
-      projectId: string;
-      webhookId: string;
-    };
+    const { projectId, webhookId } = req.params as { projectId: string; webhookId: string };
 
-    if (projectId !== authed.projectId) {
-      res.status(403).json({ error: "forbidden" });
-      return;
+    let resolvedProjectId: string;
+    if ((req as AuthedRequest).projectId) {
+      if ((req as AuthedRequest).projectId !== projectId) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      resolvedProjectId = projectId;
+    } else {
+      const resolved = await resolveProjectFromClerk(req, res);
+      if (!resolved) return;
+      resolvedProjectId = resolved;
     }
 
     const deleted = await db
       .delete(webhooks)
-      .where(
-        and(eq(webhooks.id, webhookId), eq(webhooks.projectId, projectId)),
-      )
+      .where(and(eq(webhooks.id, webhookId), eq(webhooks.projectId, resolvedProjectId)))
       .returning({ id: webhooks.id });
 
     if (deleted.length === 0) {
