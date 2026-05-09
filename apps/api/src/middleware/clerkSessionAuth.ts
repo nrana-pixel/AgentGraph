@@ -1,12 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
-import { createClerkClient } from "@clerk/backend";
+import { verifyToken } from "@clerk/backend";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { organizations } from "../db/schema.js";
-
-const clerkClient = createClerkClient({
-  secretKey: process.env["CLERK_SECRET_KEY"],
-});
 
 export interface ClerkAuthedRequest extends Request {
   clerkUserId: string;
@@ -14,11 +10,6 @@ export interface ClerkAuthedRequest extends Request {
   dbOrgId: string | null;    // Resolved internal UUID from organizations table
 }
 
-/**
- * Verifies a Clerk session JWT in the Authorization: Bearer header.
- * Populates req.clerkUserId and req.clerkOrgId from JWT claims.
- * Resolves req.dbOrgId from the organizations table when org_id is present.
- */
 export async function clerkSessionAuth(
   req: Request,
   res: Response,
@@ -33,8 +24,17 @@ export async function clerkSessionAuth(
   }
 
   try {
-    const payload = await clerkClient.verifyToken(token);
+    const secretKey = process.env["CLERK_SECRET_KEY"];
+    const result = await verifyToken(token, {
+      ...(secretKey !== undefined ? { secretKey } : {}),
+    });
 
+    if (result.errors) {
+      res.status(401).json({ error: "invalid_session_token" });
+      return;
+    }
+
+    const payload = result.data as { sub: string; [key: string]: unknown };
     const clerkOrgId = (payload["org_id"] as string | undefined) ?? null;
 
     let dbOrgId: string | null = null;

@@ -1,31 +1,61 @@
 "use client";
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { TRACES_DATA, AGENTS } from "@/lib/data";
 import { fmtNum, fmtMs, fmtMoney, relTime } from "@/lib/format";
 import { StatusBadge, EnvBadge } from "@/components/ui/primitives";
 import { IconExt, IconChev } from "@/components/ui/icons";
+import { useProject } from "@/hooks/useProject";
+import { apiGet } from "@/lib/api";
+
+interface Trace {
+  id: string;
+  agentId: string;
+  env: string;
+  status: "running" | "completed" | "error";
+  totalLatencyMs: number | null;
+  totalTokens: number | null;
+  totalCostUsd: string | null;
+  startedAt: string;
+}
 
 export default function TracesPage() {
+  const { project, token, loading: projectLoading } = useProject();
+  const [traces, setTraces] = useState<Trace[]>([]);
   const [agentFilter, setAgentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [envFilter, setEnvFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [fetching, setFetching] = useState(false);
   const router = useRouter();
   const limit = 20;
 
+  useEffect(() => {
+    if (!project || !token) return;
+    setFetching(true);
+    apiGet<{ traces: Trace[] }>(`/v1/traces?projectId=${project.id}&limit=100`, token)
+      .then(data => setTraces(data.traces))
+      .catch(() => {})
+      .finally(() => setFetching(false));
+  }, [project, token]);
+
+  const agents = useMemo(() => [...new Set(traces.map(t => t.agentId))].sort(), [traces]);
+
   const filtered = useMemo(() =>
-    TRACES_DATA.filter(t => {
+    traces.filter(t => {
       if (agentFilter && t.agentId !== agentFilter) return false;
       if (statusFilter && t.status !== statusFilter) return false;
       if (envFilter && t.env !== envFilter) return false;
       return true;
-    }), [agentFilter, statusFilter, envFilter]);
+    }), [traces, agentFilter, statusFilter, envFilter]);
 
   useEffect(() => setPage(1), [agentFilter, statusFilter, envFilter]);
 
   const paged = filtered.slice((page - 1) * limit, page * limit);
   const totalPages = Math.max(1, Math.ceil(filtered.length / limit));
+
+  if (projectLoading || fetching) {
+    return <div className="fade-up"><div className="page-h"><div><h1>Traces</h1></div></div><div className="card card-pad muted" style={{ textAlign: "center" }}>Loading…</div></div>;
+  }
 
   return (
     <div className="fade-up">
@@ -45,7 +75,7 @@ export default function TracesPage() {
             <span className="mono muted-2" style={{ fontSize: 10.5, padding: "0 6px" }}>AGENT</span>
             <select className="select" value={agentFilter} onChange={e => setAgentFilter(e.target.value)}>
               <option value="">all agents</option>
-              {AGENTS.map(a => <option key={a} value={a}>{a}</option>)}
+              {agents.map(a => <option key={a} value={a}>{a}</option>)}
             </select>
           </div>
           <div className="row" style={{ gap: 6 }}>
@@ -93,6 +123,9 @@ export default function TracesPage() {
                 <td style={{ width: 30 }}><IconChev/></td>
               </tr>
             ))}
+            {paged.length === 0 && (
+              <tr><td colSpan={9} style={{ textAlign: "center", padding: 24 }} className="muted">No traces found.</td></tr>
+            )}
           </tbody>
         </table>
         <div className="row" style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", justifyContent: "space-between" }}>

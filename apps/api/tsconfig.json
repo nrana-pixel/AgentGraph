@@ -2,10 +2,7 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist",
-    "paths": {
-      "@agentgraph/types": ["../../packages/types/src/index.ts"]
-    }
+    "outDir": "dist"
   },
   "include": ["src"]
 }

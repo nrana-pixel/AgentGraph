@@ -21,3 +21,30 @@ export async function apiRequest<T>(
 
   return res.json() as Promise<T>;
 }
+
+export function apiGet<T>(path: string, token: string): Promise<T> {
+  return apiRequest<T>(path, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function apiPost<T>(path: string, token: string, body: unknown): Promise<T> {
+  return apiRequest<T>(path, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+}
+
+export function apiPatch<T>(path: string, token: string, body: unknown): Promise<T> {
+  return apiRequest<T>(path, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+}
+
+export function apiDelete(path: string, token: string): Promise<void> {
+  return apiRequest<void>(path, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
