@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/SidebarClient";
 import { Topbar } from "@/components/layout/TopbarClient";
 import { CommandPalette } from "@/components/enhancements/CommandPaletteClient";
 import { TweaksPanel } from "@/components/enhancements/TweaksPanel";
+import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { userId } = await auth();
@@ -15,7 +16,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar/>
       <main className="main">
         <Topbar/>
-        <div className="main-inner">{children}</div>
+        <div className="main-inner">
+          <OnboardingGate>{children}</OnboardingGate>
+        </div>
       </main>
       <CommandPalette/>
       <TweaksPanel/>

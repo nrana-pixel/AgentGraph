@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   IngestPayloadSchema,
+  TraceRowSchema,
   TraceStepInputSchema,
   TokenUsageSchema,
   TraceListFilterSchema,
@@ -152,6 +153,33 @@ describe("TokenUsageSchema", () => {
     expect(
       TokenUsageSchema.safeParse({ prompt: 1.5, completion: 0, total: 1 }).success,
     ).toBe(false);
+  });
+});
+
+describe("TraceRowSchema", () => {
+  const row = {
+    id: "12345678-1234-4321-8765-123456789abc",
+    projectId: "12345678-1234-4321-8765-123456789abd",
+    agentId: "agent-1",
+    sessionId: null,
+    userId: null,
+    env: "prod",
+    status: "completed",
+    totalLatencyMs: null,
+    totalTokens: null,
+    totalCostUsd: null,
+    metadata: "{}",
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+  };
+
+  it("accepts API trace rows with nullable database-backed fields", () => {
+    expect(TraceRowSchema.safeParse(row).success).toBe(true);
+  });
+
+  it("requires projectId on trace rows", () => {
+    const { projectId: _projectId, ...withoutProjectId } = row;
+    expect(TraceRowSchema.safeParse(withoutProjectId).success).toBe(false);
   });
 });
 

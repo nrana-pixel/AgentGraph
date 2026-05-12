@@ -19,12 +19,7 @@ export async function apiRequest<T>(
 ): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers: {
-        ...options?.headers,
-      },
-    });
+    res = await fetch(`${API_BASE}${path}`, options);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "network error";
     console.error("[api] network error", { path, error: msg });
@@ -53,6 +48,19 @@ export async function apiRequest<T>(
   return (await res.text()) as unknown as T;
 }
 
+function mergeHeaders(
+  defaults: HeadersInit,
+  overrides?: HeadersInit,
+): Headers {
+  const headers = new Headers(defaults);
+  if (overrides) {
+    new Headers(overrides).forEach((value, key) => {
+      headers.set(key, value);
+    });
+  }
+  return headers;
+}
+
 function jsonBody(data: unknown): { body: string; headers: Record<string, string> } {
   return {
     body: JSON.stringify(data),
@@ -63,27 +71,37 @@ function jsonBody(data: unknown): { body: string; headers: Record<string, string
 export function apiGet<T>(path: string, token: string, options?: RequestInit): Promise<T> {
   return apiRequest<T>(path, {
     ...options,
-    headers: { Authorization: `Bearer ${token}`, ...options?.headers },
+    headers: mergeHeaders({ Authorization: `Bearer ${token}` }, options?.headers),
   });
 }
 
 export function apiPost<T>(path: string, token: string, data?: unknown, options?: RequestInit): Promise<T> {
-  const { body, headers } = data !== undefined ? jsonBody(data) : { body: undefined, headers: {} };
+  const json = data !== undefined ? jsonBody(data) : null;
+  // Body data is the source of truth when supplied; caller headers intentionally
+  // override generated defaults such as Content-Type for vendor JSON media types.
   return apiRequest<T>(path, {
     ...options,
     method: "POST",
-    body,
-    headers: { Authorization: `Bearer ${token}`, ...headers, ...options?.headers },
+    ...(json ? { body: json.body } : {}),
+    headers: mergeHeaders(
+      { Authorization: `Bearer ${token}`, ...(json?.headers ?? {}) },
+      options?.headers,
+    ),
   });
 }
 
 export function apiPatch<T>(path: string, token: string, data?: unknown, options?: RequestInit): Promise<T> {
-  const { body, headers } = data !== undefined ? jsonBody(data) : { body: undefined, headers: {} };
+  const json = data !== undefined ? jsonBody(data) : null;
+  // Body data is the source of truth when supplied; caller headers intentionally
+  // override generated defaults such as Content-Type for vendor JSON media types.
   return apiRequest<T>(path, {
     ...options,
     method: "PATCH",
-    body,
-    headers: { Authorization: `Bearer ${token}`, ...headers, ...options?.headers },
+    ...(json ? { body: json.body } : {}),
+    headers: mergeHeaders(
+      { Authorization: `Bearer ${token}`, ...(json?.headers ?? {}) },
+      options?.headers,
+    ),
   });
 }
 
@@ -91,6 +109,6 @@ export function apiDelete<T>(path: string, token: string, options?: RequestInit)
   return apiRequest<T>(path, {
     ...options,
     method: "DELETE",
-    headers: { Authorization: `Bearer ${token}`, ...options?.headers },
+    headers: mergeHeaders({ Authorization: `Bearer ${token}` }, options?.headers),
   });
 }

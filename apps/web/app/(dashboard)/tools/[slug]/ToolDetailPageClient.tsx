@@ -132,7 +132,6 @@ export default function ToolDetailPageClient({ slug }: { slug: string }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "8px 14px", width: "100%", fontSize: 11.5 }}>
             <span className="muted-2">Total calls</span><span className="mono tnum">{fmtNum(stats?.totalCalls ?? 0)}</span>
             <span className="muted-2">Data source</span><span className="mono">{tool.dataSource}</span>
-            <span className="muted-2">Last updated</span><span className="mono muted">4h ago</span>
           </div>
         </div>
 

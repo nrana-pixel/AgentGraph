@@ -11,9 +11,12 @@ import toolsRouter from "./routes/tools.js";
 import webhooksRouter from "./routes/webhooks.js";
 import projectsRouter from "./routes/projects.js";
 import usersRouter from "./routes/users.js";
+import { reportClerkSessionAuthConfig } from "./middleware/clerkSessionAuth.js";
 
 const app = express();
 const PORT = parseInt(process.env["PORT"] ?? "3001", 10);
+
+reportClerkSessionAuthConfig();
 
 // --- Global middleware ---
 app.use(helmet());
