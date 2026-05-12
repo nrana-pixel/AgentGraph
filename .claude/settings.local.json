@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item -Force package-lock.json -ErrorAction SilentlyContinue)",
+      "Bash(npm install *)"
+    ]
+  }
+}

@@ -8,3 +8,5 @@ dist/
 coverage/
 *.log
 .pnpm-store/
+# Added by code-review-graph
+.code-review-graph/
