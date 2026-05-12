@@ -21,7 +21,9 @@
   "types": "./dist/index.d.ts",
   "files": ["dist", "README.md"],
   "scripts": {
+    "prebuild": "npm run build --workspace=@agentgraph/types",
     "build": "tsc",
+    "pretypecheck": "npm run build --workspace=@agentgraph/types",
     "typecheck": "tsc --noEmit",
     "dev": "tsc --watch",
     "test": "vitest run"

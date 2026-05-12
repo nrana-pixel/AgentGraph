@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import { createHmac } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { eq, and } from "drizzle-orm";

@@ -8,6 +8,7 @@ import { useBusEvent } from "@/lib/bus";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
+import { GettingStartedCard } from "@/components/onboarding/GettingStartedCard";
 import type { TraceRow } from "@agentgraph/types";
 
 type DayStat = { date: string; traceCount: number; errorCount: number; totalTokens: number; totalCostUsd: number };
@@ -107,7 +108,6 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<StatsResp | null>(null);
   const [traces, setTraces] = useState<TraceRow[]>([]);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const [tick, setTick] = useState(0);
   const [liveOn, setLiveOn] = useState(true);
   const [statsLoading, setStatsLoading] = useState(false);
   const toast = useToast();
@@ -125,12 +125,6 @@ export default function DashboardPage() {
       .finally(() => setStatsLoading(false));
   }, [project, token, toast]);
 
-  useEffect(() => {
-    if (!liveOn) return;
-    const id = setInterval(() => setTick(t => t + 1), 2200);
-    return () => clearInterval(id);
-  }, [liveOn]);
-
   useBusEvent("toggleLiveTail", useCallback(() => setLiveOn(o => !o), []));
 
   if (projectLoading || statsLoading) {
@@ -147,7 +141,6 @@ export default function DashboardPage() {
 
   const { totals, dailyStats, topAgents, costByModel } = stats;
   const errorCount = Math.round((totals.errorRate ?? 0) * totals.traceCount);
-  const liveTraces = totals.traceCount + Math.floor(tick * 1.4);
 
   return (
     <div className="fade-up">
@@ -171,8 +164,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {totals.traceCount === 0 && <GettingStartedCard/>}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "var(--gap-card, 14px)" }}>
-        <StatCard label="Traces" value={fmtNum(liveTraces)} spark={dailyStats.map(d => d.traceCount)} color="var(--accent)" sub={`${totals.traceCount} this period`}/>
+        <StatCard label="Traces" value={fmtNum(totals.traceCount)} spark={dailyStats.map(d => d.traceCount)} color="var(--accent)" sub="this period"/>
         <StatCard label="Tokens" value={fmtNum(totals.totalTokens)} spark={dailyStats.map(d => d.totalTokens)} color="var(--violet)" sub="across all agents"/>
         <StatCard label="Cost" value={"$" + totals.totalCostUsd.toFixed(2)} spark={dailyStats.map(d => d.totalCostUsd)} color="var(--info)" sub="USD, all envs"/>
         <StatCard label="Errors" value={String(errorCount)} spark={dailyStats.map(d => d.errorCount)} color="var(--error)" sub={fmtPct(String(totals.errorRate ?? 0)) + " error rate"}/>

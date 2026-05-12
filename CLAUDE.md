@@ -418,9 +418,9 @@ npm run db:seed
 
 ### Clerk webhook setup (required for org sync)
 
-After deploying the API, register the webhook in the Clerk dashboard:
-- URL: `https://<api-url>/webhooks/clerk`
-- Events: `user.created`, `organization.created`, `organizationMembership.created`
+See [docs/CLERK_WEBHOOK_SETUP.md](docs/CLERK_WEBHOOK_SETUP.md) for full setup, troubleshooting, and replay instructions. Short version:
+- URL: `https://<api-url>/v1/auth/webhooks/clerk`
+- Events: `user.created`, `user.updated`, `organization.created`, `organization.updated`, `organizationMembership.created`
 - Copy the **Signing Secret** → set as `CLERK_WEBHOOK_SECRET`
 
 <!-- code-review-graph MCP tools -->

@@ -4,10 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
+    "prebuild": "npm run build --workspace=@agentgraph/types",
     "build": "next build",
     "start": "next start",
+    "pretypecheck": "npm run build --workspace=@agentgraph/types",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@agentgraph/types": "*",
@@ -20,7 +23,8 @@
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
   },
   "optionalDependencies": {
     "@next/swc-darwin-arm64": "16.2.6",

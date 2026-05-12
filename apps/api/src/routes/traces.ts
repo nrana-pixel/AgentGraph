@@ -6,9 +6,39 @@ import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
-import { TraceListFilterSchema } from "@agentgraph/types";
+import { TraceListFilterSchema, type TraceRow } from "@agentgraph/types";
 
 const router = Router();
+type TraceRecord = typeof traces.$inferSelect;
+
+function toIsoString(value: Date | string | null | undefined): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+  return new Date(0).toISOString();
+}
+
+function toNullableIsoString(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  return toIsoString(value);
+}
+
+function toTraceRow(row: TraceRecord): TraceRow {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    agentId: row.agentId,
+    sessionId: row.sessionId ?? null,
+    userId: row.userId ?? null,
+    env: row.env as TraceRow["env"],
+    status: row.status as TraceRow["status"],
+    totalLatencyMs: row.totalLatencyMs ?? null,
+    totalTokens: row.totalTokens ?? null,
+    totalCostUsd: row.totalCostUsd ?? null,
+    metadata: row.metadata ?? "{}",
+    startedAt: toIsoString(row.startedAt),
+    endedAt: toNullableIsoString(row.endedAt),
+  };
+}
 
 async function resolveProjectFromClerk(
   req: Request,
@@ -81,7 +111,7 @@ router.get(
       .limit(limit)
       .offset((page - 1) * limit);
 
-    res.json({ traces: rows, page, limit });
+    res.json({ traces: rows.map(toTraceRow), page, limit });
   },
 );
 
@@ -117,7 +147,7 @@ router.get(
       .where(eq(traceSteps.traceId, id))
       .orderBy(traceSteps.stepIndex);
 
-    res.json({ trace, steps });
+    res.json({ trace: toTraceRow(trace), steps });
   },
 );
 

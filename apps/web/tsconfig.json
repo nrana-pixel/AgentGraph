@@ -15,9 +15,6 @@
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "@agentgraph/types": [
-        "../../packages/types/src/index.ts"
       ]
     },
     "plugins": [

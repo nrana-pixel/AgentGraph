@@ -63,13 +63,18 @@ export type IngestResponse = z.infer<typeof IngestResponseSchema>;
 
 export const TraceRowSchema = z.object({
   id: z.string().uuid(),
+  projectId: z.string().uuid(),
   agentId: z.string(),
-  env: z.string(),
+  sessionId: z.string().nullable(),
+  userId: z.string().nullable(),
+  env: EnvSchema,
   status: TraceStatusSchema,
   totalLatencyMs: z.number().nullable(),
   totalTokens: z.number().nullable(),
   totalCostUsd: z.string().nullable(),
+  metadata: z.string(),
   startedAt: z.string(),
+  endedAt: z.string().nullable(),
 });
 export type TraceRow = z.infer<typeof TraceRowSchema>;
 

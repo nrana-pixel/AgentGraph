@@ -48,8 +48,8 @@ app.use(express.json());
 app.use("/v1/traces", tracesRouter);
 
 const traceRow = {
-  id: "trace-uuid-1234",
-  projectId: "proj-1",
+  id: "12345678-1234-4321-8765-123456789abc",
+  projectId: "12345678-1234-4321-8765-123456789abd",
   agentId: "agent-1",
   sessionId: "s1",
   userId: "u1",
@@ -58,12 +58,14 @@ const traceRow = {
   totalLatencyMs: 1200,
   totalTokens: 500,
   totalCostUsd: "0.005",
-  startedAt: new Date().toISOString(),
+  metadata: "{}",
+  startedAt: new Date("2026-01-01T00:00:00.000Z"),
+  endedAt: null,
 };
 
 const stepRow = {
-  id: "step-uuid-1",
-  traceId: "trace-uuid-1234",
+  id: "12345678-1234-4321-8765-123456789abe",
+  traceId: "12345678-1234-4321-8765-123456789abc",
   stepIndex: 0,
   type: "llm_call",
   name: "gpt-4o",
@@ -91,7 +93,13 @@ describe("GET /v1/traces", () => {
     const res = await request(app).get("/v1/traces");
     expect(res.status).toBe(200);
     expect(res.body.traces).toHaveLength(1);
-    expect(res.body.traces[0].id).toBe("trace-uuid-1234");
+    expect(res.body.traces[0]).toMatchObject({
+      id: "12345678-1234-4321-8765-123456789abc",
+      projectId: "12345678-1234-4321-8765-123456789abd",
+      metadata: "{}",
+      endedAt: null,
+    });
+    expect(res.body.traces[0].startedAt).toBe("2026-01-01T00:00:00.000Z");
   });
 
   it("returns an empty list when there are no traces", async () => {
@@ -125,9 +133,14 @@ describe("GET /v1/traces/:id", () => {
     vi.mocked(db.select)
       .mockReturnValueOnce(makeChain([traceRow]))   // trace query
       .mockReturnValueOnce(makeChain([stepRow]));   // steps query
-    const res = await request(app).get("/v1/traces/trace-uuid-1234");
+    const res = await request(app).get("/v1/traces/12345678-1234-4321-8765-123456789abc");
     expect(res.status).toBe(200);
-    expect(res.body.trace.id).toBe("trace-uuid-1234");
+    expect(res.body.trace).toMatchObject({
+      id: "12345678-1234-4321-8765-123456789abc",
+      projectId: "12345678-1234-4321-8765-123456789abd",
+      metadata: "{}",
+      endedAt: null,
+    });
     expect(res.body.steps).toHaveLength(1);
   });
 
