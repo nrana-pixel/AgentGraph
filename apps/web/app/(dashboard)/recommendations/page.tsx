@@ -1,42 +1,17 @@
 "use client";
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { TOOLS_DATA, TOOL_CATEGORIES } from "@/lib/data";
+import { ToolCategorySchema } from "@agentgraph/types";
+import type { ToolRecommendation } from "@agentgraph/types";
 import { fmtMs, fmtPct } from "@/lib/format";
 import { Badge, ToolIcon, Ring } from "@/components/ui/primitives";
 import { IconZap, IconChev, IconCheck, IconPlus } from "@/components/ui/icons";
 import { useTweaks } from "@/lib/tweaks";
+import { useProject } from "@/hooks/useProject";
+import { apiGet } from "@/lib/api";
+import { useToast } from "@/components/ui/toast";
 
-type Rec = {
-  slug: string; name: string; category: string; score: number;
-  successRate: number; avgLatencyMs: number; p95LatencyMs: number;
-  popularityScore: number; sentimentScore: number; isOpenSource: boolean;
-  isSelfHostable: boolean; pricingModel: string; dataResidency: string[];
-  reason: string; isCold: boolean; docsUrl: string;
-};
-
-const HINTS: Record<string, RegExp> = {
-  email: /email|transactional|inbox|smtp/i,
-  auth: /auth|sign[- ]?in|login|sso|user/i,
-  payments: /pay|stripe|checkout|invoice|charge/i,
-  vector_db: /vector|embedding|rag|semantic/i,
-  database: /database|postgres|sql|store/i,
-  storage: /storage|file|upload|blob|s3/i,
-  search: /search|index|query/i,
-  monitoring: /monitor|trace|error|observ|metric/i,
-  llm_provider: /llm|inference|model|gpt|claude/i,
-  ai_gateway: /gateway|fallback|cache/i,
-  analytics: /analytics|funnel|event/i,
-  crm: /crm|lead|contact/i,
-  queue: /queue|job|background|worker/i,
-  communication: /slack|sms|notify|message/i,
-};
-
-function buildReason(t: typeof TOOLS_DATA[0], success: number, latency: number, popularity: number, sentiment: number) {
-  const top = ([["high reliability", success], ["low latency", latency], ["broad adoption", popularity], ["positive sentiment", sentiment]] as [string, number][])
-    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? "high reliability";
-  return `${t.name} ranked highest for "${t.category.replace("_", " ")}" — ${top}, ${fmtPct(t.successRate)} success, ${t.avgLatencyMs}ms p50.`;
-}
+type Rec = ToolRecommendation & { isCold: boolean };
 
 function DimMini({ label, value, valueLabel, color }: { label: string; value: number; valueLabel: string; color: string }) {
   return (
@@ -53,6 +28,11 @@ function DimMini({ label, value, valueLabel, color }: { label: string; value: nu
 function RankedRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number; compared: boolean; onCompare: () => void }) {
   const [open, setOpen] = useState(rank === 1);
   const router = useRouter();
+  const successRate = rec.successRate ?? 0;
+  const avgLatencyMs = rec.avgLatencyMs ?? 0;
+  const p95LatencyMs = rec.p95LatencyMs ?? 0;
+  const popularityScore = rec.popularityScore ?? 0;
+  const sentimentScore = rec.sentimentScore ?? 0;
   return (
     <div className="rec-card fade-up" data-compared={compared ? "true" : undefined}>
       <div className="rec-score-wrap">
@@ -79,18 +59,18 @@ function RankedRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number;
         </div>
         <div className="muted" style={{ fontSize: 12.5 }}>{rec.reason}</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, paddingTop: 4 }}>
-          <DimMini label="reliability" value={rec.successRate * 100} valueLabel={fmtPct(rec.successRate)} color="var(--success)"/>
-          <DimMini label="latency" value={Math.max(0, 1 - rec.avgLatencyMs / 2000) * 100} valueLabel={fmtMs(rec.avgLatencyMs)} color="var(--accent)"/>
-          <DimMini label="popularity" value={rec.popularityScore * 100} valueLabel={(rec.popularityScore * 100).toFixed(0)} color="var(--violet)"/>
-          <DimMini label="sentiment" value={rec.sentimentScore * 100} valueLabel={(rec.sentimentScore * 5).toFixed(1) + "★"} color="var(--info)"/>
+          <DimMini label="reliability" value={successRate * 100} valueLabel={fmtPct(String(successRate))} color="var(--success)"/>
+          <DimMini label="latency" value={Math.max(0, 1 - avgLatencyMs / 2000) * 100} valueLabel={fmtMs(avgLatencyMs)} color="var(--accent)"/>
+          <DimMini label="popularity" value={popularityScore * 100} valueLabel={(popularityScore * 100).toFixed(0)} color="var(--violet)"/>
+          <DimMini label="sentiment" value={sentimentScore * 100} valueLabel={(sentimentScore * 5).toFixed(1) + "★"} color="var(--info)"/>
         </div>
         {open && (
           <div className="fade-up" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
             <div className="col" style={{ gap: 6, fontSize: 11.5 }}>
               <div className="row" style={{ gap: 14 }}>
-                <span className="muted-2 mono">p95</span><span className="mono">{fmtMs(rec.p95LatencyMs)}</span>
+                <span className="muted-2 mono">p95</span><span className="mono">{fmtMs(p95LatencyMs)}</span>
                 <span className="muted-2 mono">pricing</span><span className="mono">{rec.pricingModel || "—"}</span>
-                <span className="muted-2 mono">residency</span><span className="mono">{rec.dataResidency.join(" · ") || "—"}</span>
+                <span className="muted-2 mono">residency</span><span className="mono">{(rec.dataResidency ?? []).join(" · ") || "—"}</span>
               </div>
             </div>
             <div className="row" style={{ gap: 6 }}>
@@ -106,6 +86,9 @@ function RankedRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number;
 
 function CompactRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number; compared: boolean; onCompare: () => void }) {
   const router = useRouter();
+  const successRate = rec.successRate ?? 0;
+  const avgLatencyMs = rec.avgLatencyMs ?? 0;
+  const sentimentScore = rec.sentimentScore ?? 0;
   return (
     <div className="card card-pad fade-up" data-compared={compared ? "true" : undefined} style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative" }}>
       <button className="compact-compare" data-active={compared ? "true" : undefined} onClick={e => { e.stopPropagation(); onCompare(); }} title="Compare">
@@ -125,9 +108,9 @@ function CompactRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number
         </div>
         <div className="bar"><div className="bar-fill" style={{ width: rec.score + "%" }}/></div>
         <div className="row" style={{ justifyContent: "space-between", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
-          <span>{fmtPct(rec.successRate)}</span>
-          <span>{fmtMs(rec.avgLatencyMs)}</span>
-          <span>{(rec.sentimentScore * 5).toFixed(1)}★</span>
+          <span>{fmtPct(String(successRate))}</span>
+          <span>{fmtMs(avgLatencyMs)}</span>
+          <span>{(sentimentScore * 5).toFixed(1)}★</span>
         </div>
       </div>
     </div>
@@ -166,14 +149,16 @@ function GalaxyRec({ recs }: { recs: Rec[] }) {
 
 export default function RecommendationsPage() {
   const [tweaks] = useTweaks();
+  const { token } = useProject();
   const [task, setTask] = useState("Send transactional emails to verified users with low p95 latency");
-  const [submittedTask, setSubmittedTask] = useState("Send transactional emails to verified users with low p95 latency");
-  const [cat, setCat] = useState("");
+  const [cat, setCat] = useState<string>("");
   const [oss, setOss] = useState(false);
   const [selfHosted, setSelfHosted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [style, setStyle] = useState<"ranked" | "compact" | "galaxy">(tweaks.recCard as "ranked" | "compact" | "galaxy");
+  const [recs, setRecs] = useState<Rec[]>([]);
   const [compareItems, setCompareItems] = useState<Rec[]>([]);
+  const toast = useToast();
 
   useEffect(() => { setStyle(tweaks.recCard as "ranked" | "compact" | "galaxy"); }, [tweaks.recCard]);
 
@@ -185,27 +170,17 @@ export default function RecommendationsPage() {
     });
   };
 
-  const recs: Rec[] = useMemo(() => {
-    let pool = TOOLS_DATA.slice();
-    if (cat) pool = pool.filter(t => t.category === cat);
-    if (oss) pool = pool.filter(t => t.isOpenSource);
-    if (selfHosted) pool = pool.filter(t => t.isSelfHostable);
-    const matchedCat = Object.entries(HINTS).find(([, re]) => re.test(submittedTask));
-    if (matchedCat && !cat) pool = pool.filter(t => t.category === matchedCat[0]);
-    return pool.map(t => {
-      const success = parseFloat(t.successRate || "0");
-      const popularity = parseFloat(t.popularityScore || "0");
-      const sentiment = parseFloat(t.sentimentScore || "0");
-      const latencyScore = Math.max(0, 1 - parseInt(t.avgLatencyMs || "0") / 2000);
-      const isCold = (t.totalCalls || 0) < 50;
-      const score = Math.min(isCold ? 70 : 100, success * 40 + latencyScore * 20 + popularity * 25 + sentiment * 15);
-      return { slug: t.slug, name: t.name, category: t.category, score, successRate: success, avgLatencyMs: parseInt(t.avgLatencyMs), p95LatencyMs: parseInt(t.p95LatencyMs), popularityScore: popularity, sentimentScore: sentiment, isOpenSource: t.isOpenSource, isSelfHostable: t.isSelfHostable, pricingModel: t.pricingModel, dataResidency: t.dataResidency, reason: buildReason(t, success, latencyScore, popularity, sentiment), isCold, docsUrl: t.docsUrl };
-    }).sort((a, b) => b.score - a.score).slice(0, 5);
-  }, [submittedTask, cat, oss, selfHosted]);
-
   const submit = () => {
+    if (!task.trim() || !token) return;
+    const params = new URLSearchParams({ task: task.trim(), limit: "5" });
+    if (cat) params.set("category", cat);
+    if (oss) params.set("openSource", "true");
+    if (selfHosted) params.set("selfHosted", "true");
     setLoading(true);
-    setTimeout(() => { setSubmittedTask(task); setLoading(false); }, 600);
+    apiGet<{ recommendations: ToolRecommendation[] }>(`/v1/tools/recommend?${params}`, token)
+      .then(d => setRecs(d.recommendations.map(r => ({ ...r, isCold: r.dataSource === "seeded" }))))
+      .catch((err: Error) => toast(`Failed to fetch recommendations: ${err.message}`))
+      .finally(() => setLoading(false));
   };
 
   return (
@@ -230,7 +205,7 @@ export default function RecommendationsPage() {
                       onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(); }}
                       placeholder="e.g. Store user-uploaded PDFs with EU residency, low cost, no egress fees"
                       style={{ resize: "vertical", fontFamily: "var(--font-mono)", fontSize: 12.5, lineHeight: 1.5 }}/>
-            <button className="btn btn-primary" onClick={submit} style={{ alignSelf: "stretch", padding: "0 16px" }}>
+            <button className="btn btn-primary" onClick={submit} disabled={loading} style={{ alignSelf: "stretch", padding: "0 16px" }}>
               {loading ? <span className="spinner"/> : <IconZap/>}
               {loading ? "Ranking..." : "Recommend"}
             </button>
@@ -238,7 +213,7 @@ export default function RecommendationsPage() {
           <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
             <select className="select" value={cat} onChange={e => setCat(e.target.value)}>
               <option value="">auto-detect category</option>
-              {TOOL_CATEGORIES.map(c => <option key={c} value={c}>{c.replace("_", " ")}</option>)}
+              {ToolCategorySchema.options.map(c => <option key={c} value={c}>{c.replace("_", " ")}</option>)}
             </select>
             <label className="row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={oss} onChange={e => setOss(e.target.checked)}/> Open source</label>
             <label className="row" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={selfHosted} onChange={e => setSelfHosted(e.target.checked)}/> Self-hosted</label>
@@ -260,7 +235,9 @@ export default function RecommendationsPage() {
       </div>
 
       {recs.length === 0 ? (
-        <div className="card card-pad muted" style={{ textAlign: "center" }}>No tools match. Try removing filters.</div>
+        <div className="card card-pad muted" style={{ textAlign: "center" }}>
+          {loading ? "Ranking tools…" : "Enter a task above and click Recommend."}
+        </div>
       ) : style === "ranked" ? (
         <div className="col" style={{ gap: 10 }}>
           {recs.map((r, i) => <RankedRec key={r.slug} rec={r} rank={i + 1} compared={!!compareItems.find(x => x.slug === r.slug)} onCompare={() => toggleCompare(r)}/>)}

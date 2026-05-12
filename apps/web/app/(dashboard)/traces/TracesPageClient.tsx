@@ -6,10 +6,12 @@ import { StatusBadge, EnvBadge } from "@/components/ui/primitives";
 import { IconExt, IconChev } from "@/components/ui/icons";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
+import { useToast } from "@/components/ui/toast";
 import type { TraceRow } from "@agentgraph/types";
 
 export default function TracesPageClient() {
   const { project, token, loading: projectLoading } = useProject();
+  const toast = useToast();
   const [traces, setTraces] = useState<TraceRow[]>([]);
   const [agentFilter, setAgentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -24,9 +26,9 @@ export default function TracesPageClient() {
     setFetching(true);
     apiGet<{ traces: TraceRow[] }>(`/v1/traces?projectId=${project.id}&limit=100`, token)
       .then(data => setTraces(data.traces))
-      .catch(() => {})
+      .catch((err: Error) => toast(`Failed to load traces: ${err.message}`))
       .finally(() => setFetching(false));
-  }, [project, token]);
+  }, [project, token, toast]);
 
   const agents = useMemo(() => [...new Set(traces.map(t => t.agentId))].sort(), [traces]);
 

@@ -1,12 +1,14 @@
 "use client";
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { TOOL_CATEGORIES } from "@/lib/data";
+import { ToolCategorySchema } from "@agentgraph/types";
+const TOOL_CATEGORIES = ToolCategorySchema.options;
 import { fmtNum, fmtMs, fmtPct } from "@/lib/format";
 import { Badge, ToolIcon } from "@/components/ui/primitives";
 import { IconSearch } from "@/components/ui/icons";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
+import { useToast } from "@/components/ui/toast";
 import type { ToolListItem } from "@agentgraph/types";
 
 function Metric({ label, value, color }: { label: string; value: string; color: string }) {
@@ -28,15 +30,16 @@ export default function ToolsPage() {
   const [sortBy, setSortBy] = useState("popularity");
   const [fetching, setFetching] = useState(false);
   const router = useRouter();
+  const toast = useToast();
 
   useEffect(() => {
     if (!token) return;
     setFetching(true);
     apiGet<{ tools: ToolListItem[] }>("/v1/tools?limit=100", token)
       .then(data => setTools(data.tools))
-      .catch(() => {})
+      .catch((err: Error) => toast(`Failed to load tools: ${err.message}`))
       .finally(() => setFetching(false));
-  }, [token]);
+  }, [token, toast]);
 
   const filtered = useMemo(() => {
     let list = tools.slice();
