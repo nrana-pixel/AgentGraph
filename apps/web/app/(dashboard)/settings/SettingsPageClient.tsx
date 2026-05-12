@@ -36,7 +36,7 @@ export default function SettingsPageClient() {
       apiGet<{ webhooks: Webhook[] }>(`/v1/projects/${project.id}/webhooks`, token),
     ])
       .then(([k, b, w]) => { setKeys(k.apiKeys); setBilling(b); setWebhooks(w.webhooks); })
-      .catch(() => {})
+      .catch((err: Error) => toast(`Failed to load settings: ${err.message}`))
       .finally(() => setFetching(false));
   }, [project, token]);
 
