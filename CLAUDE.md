@@ -88,7 +88,7 @@ Turborepo monorepo with npm workspaces. TypeScript strict mode everywhere.
 npm run dev           # start all apps (Turborepo)
 npm run build         # production build all apps
 npm run typecheck     # tsc --noEmit across all packages
-npm run test          # Vitest (apps/api only so far)
+npm run test          # Vitest across all packages
 npm run lint          # ESLint
 
 cd apps/api
@@ -102,9 +102,10 @@ npm run db:generate   # regenerate migration files from schema changes
 ### Auth — dual pattern
 - **SDK clients** send `ag_*` API keys in `Authorization: Bearer ag_live_...`
 - **Dashboard** sends Clerk session JWTs in `Authorization: Bearer eyJ...`
-- `flexAuth` middleware in routes dispatches based on the `ag_` prefix
+- `flexAuth` middleware in `apps/api/src/middleware/flexAuth.ts` dispatches based on the `ag_` prefix
 - `apiKeyAuth` (`apps/api/src/middleware/apiKeyAuth.ts`) — bcrypt compare with 60s in-memory cache
 - `clerkSessionAuth` (`apps/api/src/middleware/clerkSessionAuth.ts`) — `@clerk/backend` verifyToken
+- `CLERK_AUTHORIZED_PARTIES` env var controls allowed JWT issuers
 
 ### Database — Drizzle ORM
 - Schema is the single source of truth: `apps/api/src/db/schema.ts`
@@ -133,38 +134,66 @@ Redis sliding-window, 1000 req/min per key. `apps/api/src/middleware/rateLimiter
 ### Shared types
 All Zod schemas live in `packages/types/src/`. Import from `@agentgraph/types`.
 Never duplicate schemas — add to the package and import.
+Key response types: `TraceRow`, `TraceStepRow` (in `trace.ts`), `ToolListItem` (in `tool.ts`).
+
+### Dashboard data fetching
+- `useProject` hook (`apps/web/hooks/useProject.ts`) fetches the user's first project + Clerk token
+- `apiGet/apiPost/apiPatch/apiDelete` helpers in `apps/web/lib/api.ts` handle auth headers + base URL
+- All dashboard pages fetch live data from the API — `lib/data.ts` mock data is removed
+- Onboarding: `OnboardingGate` + `GettingStartedCard` in `apps/web/components/onboarding/` shown to new users
 
 ## Environment variables
 
-The API and worker read from `.env` via `dotenv/config`. The web app uses Next.js env loading.
+Copy `.env.example` to `.env`. The API and worker read from `.env` via `dotenv/config`. The web app uses Next.js env loading.
 
 Required for local dev:
 ```
 DATABASE_URL=postgres://agentgraph:agentgraph@localhost:5432/agentgraph
 REDIS_URL=redis://localhost:6379
+PORT=3001
+ALLOWED_ORIGINS=http://localhost:3000
 CLERK_SECRET_KEY=sk_test_...
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_WEBHOOK_SECRET=whsec_...
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
+NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
+NEXT_PUBLIC_API_URL=http://localhost:3001
+```
+
+Optional:
+```
+CLERK_AUTHORIZED_PARTIES=https://app.agentgraph.dev   # prod JWT allowlist
+CLERK_JWT_AUDIENCE=...                                 # if Clerk template emits aud
+GITHUB_TOKEN=ghp_...                                   # sentiment fetcher (5k req/hr)
+STRIPE_SECRET_KEY=sk_test_...                          # Phase 5: billing
+STRIPE_WEBHOOK_SECRET=whsec_...                        # Phase 5: Stripe webhook
 ```
 
 ## Branch & PR conventions
 
 - `main` — stable, always deployable
-- `phase/N-name` — feature branch per phase
-- Squash merge PRs; fast-forward main after merge with `git merge --ff-only origin/<base-branch>`
-- Branch currently being worked on: check `git branch` — development phases use `phase/N-*` naming
+- Feature branches off main; squash merge PRs
+- Branch currently being worked on: check `git branch`
 
-## What's built vs what's pending
+## What's built
 
-### Done (Phases 0–4)
+### Done (Phases 0–4 + prod hardening)
 - Monorepo scaffold, Docker Compose, ESLint/Prettier/Husky
-- Auth: Clerk integration, org/project/API key management
+- Auth: Clerk integration, org/project/API key management, `flexAuth` shared middleware
 - Ingest: Redis queue, worker consumer, cost computation, tool auto-discovery
-- Traces: list + detail endpoints, waterfall timeline dashboard UI
-- Tool catalog: 83 seeded tools, FTS GIN index, recommendation engine with Redis cache
-- Dashboard: traces UI, tool grid, tool profile, recommendations form
-- `@agentgraph/sdk`: `AgentGraph` client, `Trace`/`Span` classes, OpenAI + Anthropic auto-instrumentation
-- **Phase 4**: Billing enforcement (plan limits → 402), cost spike webhooks (worker fires HMAC-signed POST when trace cost ≥ threshold), `/cost-explorer` page (daily chart + model/agent breakdown), `/settings` page (billing meter + API key CRUD + webhook CRUD), `GET /billing` + `GET /webhooks` API endpoints
+- Traces: list + detail endpoints, waterfall/flame/timeline dashboard UI (live API)
+- Tool catalog: 83 seeded tools, FTS GIN index, recommendation engine with Redis cache (live API)
+- Dashboard overview: live stats, daily activity chart, top agents, recent traces (live API)
+- Cost Explorer: daily spend chart, model/agent breakdown, plan usage meter (live API)
+- Settings: billing meter, API key CRUD, webhook CRUD (live API)
+- Recommendations: form + results UI (live API)
+- `@agentgraph/sdk`: `AgentGraph` client, `Trace`/`Span` classes, OpenAI + Anthropic auto-instrumentation, zero runtime deps
+- Billing enforcement: `POST /v1/ingest` checks plan limits → 402 when over quota
+- Cost spike webhooks: HMAC-SHA256 signed, fires when trace cost ≥ $1.00
+- Onboarding: `OnboardingGate` + `GettingStartedCard` shown to new users
+- Vitest test suites: API routes, middleware, SDK span/trace, shared types
 
 ### Phase 4 details
 
@@ -174,26 +203,28 @@ CLERK_WEBHOOK_SECRET=whsec_...
 - `GET /v1/projects/:id/billing` returns plan, usage, limit, usagePct
 
 #### Cost spike webhooks
-- Worker fires webhooks after every trace insert where `totalCostUsd ≥ COST_SPIKE_THRESHOLD_USD` (default $1.00, override via env var)
+- Worker fires webhooks after every trace insert where `totalCostUsd ≥ $1.00` (hardcoded in `ingestConsumer.ts`)
 - Only fires to webhooks with `"cost_spike"` in their events array
 - HMAC-SHA256 signed with per-webhook secret; header: `X-AgentGraph-Signature: sha256=<hex>`
 - Timeout: 5s per webhook; uses `Promise.allSettled` so one failure doesn't block others
 
-#### Cost Explorer page
-- Route: `/cost-explorer`
-- Period selector: 7d / 30d / 90d
-- Stats: total spend, tokens, traces, avg cost/trace
-- Daily bar chart
-- Model breakdown table (cost, tokens, calls, % share)
-- Agent breakdown table (cost, traces, tokens, error rate)
-
-#### Settings page
-- Billing card with usage meter bar (green/yellow/red by %)
-- API key CRUD (create → show raw key once, revoke)
-- Webhook CRUD (add URL + event checkboxes, toggle enabled, delete)
-
 ### Pending (Phase 5)
-- Public documentation site, Stripe billing integration, SSO/SAML for enterprise plan
+- Stripe billing integration, public documentation site, SSO/SAML for enterprise plan
+
+## Testing
+
+Tests use [Vitest](https://vitest.dev/). Run `npm run test` from repo root.
+
+Test files live next to the source they test:
+- `apps/api/src/lib/modelCosts.test.ts`
+- `apps/api/src/middleware/apiKeyAuth.test.ts`, `clerkSessionAuth.test.ts`, `errorHandler.test.ts`, `rateLimiter.test.ts`
+- `apps/api/src/routes/ingest.test.ts`, `traces.test.ts`
+- `apps/api/src/services/recommendationEngine.test.ts`
+- `apps/web/lib/api.test.ts`
+- `packages/sdk/src/span.test.ts`, `trace.test.ts`
+- `packages/types/src/schemas.test.ts`
+
+Each package has its own `vitest.config.ts`.
 
 ## Common tasks
 
@@ -211,11 +242,10 @@ CLERK_WEBHOOK_SECRET=whsec_...
 
 ### Adding a dashboard page
 - Server components live in `apps/web/app/(dashboard)/`
-- Fetch with Clerk token: `const { getToken } = await auth(); const token = await getToken();`
-- Pass token as `Authorization: Bearer ${token}` to the API
-- Client components (interactive forms etc.) go in a separate `*Client.tsx` file
-- In Next.js 16, dynamic route `params` is a `Promise` — always `await params` in server components or use `use(params)` in client components
-- Keep `page.tsx` as a thin server wrapper; push all client hooks into a co-located `*Client.tsx`
+- Keep `page.tsx` as a thin server wrapper (`export const dynamic = "force-dynamic"`); push all client hooks into a co-located `*PageClient.tsx`
+- Use `useProject()` hook to get the active project + Clerk token
+- Use `apiGet/apiPost/apiPatch/apiDelete` from `@/lib/api` for all API calls
+- In Next.js 16, dynamic route `params` is a `Promise` — always `await params` in server components
 - ESLint is no longer run during `next build` in Next.js 16 — run it separately via `npm run lint`
 - `next.config.ts` uses `transpilePackages` for `@clerk/nextjs`, `@clerk/clerk-react`, `@clerk/shared`
 
@@ -253,175 +283,13 @@ SDK source lives in `packages/sdk/src/`. It has zero runtime dependencies — us
 Add new models to `apps/api/src/lib/modelCosts.ts` AND `apps/worker/src/lib/modelCosts.ts` (both copies).
 The longest-prefix sort in `computeCost()` is intentional — it prevents `gpt-4o` matching before `gpt-4o-mini`.
 
----
-
-## Cloud Deployment Guide
-
-The stack requires four services: **PostgreSQL**, **Redis**, **API** (Express), **Worker** (Node), and **Web** (Next.js). Below are guides for the two recommended platforms.
-
----
-
-### Option A — Railway (recommended, easiest)
-
-Railway natively supports all five services in one project with private networking.
-
-#### 1. Create a Railway project
-
-```bash
-npm install -g @railway/cli
-railway login
-railway init   # inside /home/user/AgentGraph
-```
-
-#### 2. Provision managed services
-
-In the Railway dashboard → **+ New** → add:
-- **PostgreSQL** (Railway-managed) — copy `DATABASE_URL` from the service's Variables tab
-- **Redis** (Railway-managed) — copy `REDIS_URL`
-
-#### 3. Deploy the API
-
-```bash
-# From repo root
-railway service create agentgraph-api
-railway link          # select the service
-railway variables set \
-  DATABASE_URL="<from step 2>" \
-  REDIS_URL="<from step 2>" \
-  CLERK_SECRET_KEY="sk_live_..." \
-  CLERK_WEBHOOK_SECRET="whsec_..."
-```
-
-Add a `railway.toml` (or set in dashboard):
-```toml
-[build]
-builder = "nixpacks"
-buildCommand = "npm install && npm run build --workspace=apps/api"
-
-[deploy]
-startCommand = "node apps/api/dist/index.js"
-healthcheckPath = "/health"
-```
-
-#### 4. Deploy the Worker
-
-```bash
-railway service create agentgraph-worker
-# Set same DATABASE_URL + REDIS_URL env vars
-```
-
-`railway.toml` for worker:
-```toml
-[build]
-buildCommand = "npm install && npm run build --workspace=apps/worker"
-
-[deploy]
-startCommand = "node apps/worker/dist/index.js"
-```
-
-#### 5. Deploy the Web (Next.js)
-
-```bash
-railway service create agentgraph-web
-railway variables set \
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_live_..." \
-  CLERK_SECRET_KEY="sk_live_..." \
-  NEXT_PUBLIC_CLERK_SIGN_IN_URL="/sign-in" \
-  NEXT_PUBLIC_CLERK_SIGN_UP_URL="/sign-up" \
-  NEXT_PUBLIC_API_URL="https://<api-service>.railway.app"
-```
-
-`railway.toml` for web:
-```toml
-[build]
-buildCommand = "npm install && npm run build --workspace=apps/web"
-
-[deploy]
-startCommand = "npm run start --workspace=apps/web"
-```
-
-#### 6. Run DB migrations on first deploy
-
-```bash
-railway run --service agentgraph-api npm run db:migrate
-railway run --service agentgraph-api npm run db:seed
-```
-
----
-
-### Option B — Vercel (web) + Render (API + worker + services)
-
-Split the stack: Vercel handles the Next.js frontend; Render runs the backend.
-
-#### Web → Vercel
-
-1. Push to GitHub, import the repo at vercel.com
-2. Set **Root Directory** to `apps/web`
-3. Framework preset: **Next.js** (auto-detected)
-4. Add env vars:
-   ```
-   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-   CLERK_SECRET_KEY=sk_live_...
-   NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-   NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
-   NEXT_PUBLIC_API_URL=https://<render-api>.onrender.com
-   ```
-5. Deploy — Vercel auto-detects Turborepo and builds only `apps/web`.
-
-#### PostgreSQL + Redis → Render
-
-- **PostgreSQL**: Render dashboard → **+ New** → PostgreSQL → copy the Internal Connection String as `DATABASE_URL`
-- **Redis**: **+ New** → Redis → copy `REDIS_URL`
-
-#### API → Render (Web Service)
-
-| Setting | Value |
-|---|---|
-| Root directory | _(leave blank — repo root)_ |
-| Build command | `npm install && npm run build --workspace=apps/api` |
-| Start command | `node apps/api/dist/index.js` |
-| Health check path | `/health` |
-
-Env vars: `DATABASE_URL`, `REDIS_URL`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SECRET`
-
-#### Worker → Render (Background Worker)
-
-| Setting | Value |
-|---|---|
-| Build command | `npm install && npm run build --workspace=apps/worker` |
-| Start command | `node apps/worker/dist/index.js` |
-
-Env vars: `DATABASE_URL`, `REDIS_URL`
-
-#### Run migrations
-
-Use the Render shell (dashboard → API service → Shell tab):
-```bash
-npm run db:migrate
-npm run db:seed
-```
-
----
-
-### Environment variables reference
-
-| Variable | Required by | Notes |
-|---|---|---|
-| `DATABASE_URL` | api, worker | Postgres connection string |
-| `REDIS_URL` | api, worker | Redis connection string |
-| `CLERK_SECRET_KEY` | api, web | `sk_live_...` from Clerk dashboard |
-| `CLERK_WEBHOOK_SECRET` | api | From Clerk → Webhooks → Signing secret |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | web | `pk_live_...` from Clerk dashboard |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` | web | `/sign-in` |
-| `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | web | `/sign-up` |
-| `NEXT_PUBLIC_API_URL` | web | Public URL of the deployed API |
-
-### Clerk webhook setup (required for org sync)
-
-See [docs/CLERK_WEBHOOK_SETUP.md](docs/CLERK_WEBHOOK_SETUP.md) for full setup, troubleshooting, and replay instructions. Short version:
+### Clerk webhook setup
+See `docs/CLERK_WEBHOOK_SETUP.md` for full setup, troubleshooting, and replay instructions. Short version:
 - URL: `https://<api-url>/v1/auth/webhooks/clerk`
 - Events: `user.created`, `user.updated`, `organization.created`, `organization.updated`, `organizationMembership.created`
 - Copy the **Signing Secret** → set as `CLERK_WEBHOOK_SECRET`
+
+---
 
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
