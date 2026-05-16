@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { verifyToken } from "@clerk/backend";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { organizations } from "../db/schema.js";
+import { organizations, orgMembers, users } from "../db/schema.js";
 
 interface ClerkSessionAuthConfig {
   secretKey: string;
@@ -128,6 +128,16 @@ export async function clerkSessionAuth(
         .from(organizations)
         .where(eq(organizations.clerkOrgId, clerkOrgId));
       dbOrgId = org?.id ?? null;
+    } else {
+      // No active org in JWT — fall back to the user's first org membership.
+      // Lets single-org users skip Clerk's "active org" requirement.
+      const [membership] = await db
+        .select({ orgId: orgMembers.orgId })
+        .from(orgMembers)
+        .innerJoin(users, eq(users.id, orgMembers.userId))
+        .where(eq(users.clerkId, claims.sub))
+        .limit(1);
+      dbOrgId = membership?.orgId ?? null;
     }
 
     (req as ClerkAuthedRequest).clerkUserId = claims.sub;
