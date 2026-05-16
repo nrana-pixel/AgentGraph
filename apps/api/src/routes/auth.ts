@@ -72,13 +72,20 @@ router.post(
     const wh = new Webhook(webhookSecret);
     let event: ClerkEvent;
 
+    const rawBody = Buffer.isBuffer(req.body)
+      ? req.body.toString("utf8")
+      : typeof req.body === "string"
+        ? req.body
+        : JSON.stringify(req.body);
+
     try {
-      event = wh.verify(JSON.stringify(req.body), {
+      event = wh.verify(rawBody, {
         "svix-id": svixId,
         "svix-timestamp": svixTimestamp,
         "svix-signature": svixSignature,
       }) as ClerkEvent;
-    } catch {
+    } catch (err) {
+      console.error("[clerk-webhook] signature verification failed:", err);
       res.status(400).json({ error: "invalid_webhook_signature" });
       return;
     }
