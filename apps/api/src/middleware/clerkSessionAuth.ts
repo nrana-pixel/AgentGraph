@@ -140,6 +140,40 @@ export async function clerkSessionAuth(
   }
 }
 
+/**
+ * Resolve a Clerk user → DB user row, treating email as canonical identity.
+ * Returns the DB user id (uuid) or null if the Clerk user has no primary
+ * email or the lookup fails.
+ *
+ * Why email and not clerk_id: if a user is deleted + recreated in Clerk (or
+ * the user.deleted webhook is missed), Clerk issues a new clerk_id but the
+ * email is reused. Keying on clerk_id alone causes a UNIQUE(email) violation
+ * on insert.
+ */
+export async function upsertUserByEmail(
+  client: ReturnType<typeof createClerkClient>,
+  clerkUserId: string,
+): Promise<string | null> {
+  const clerkUser = await client.users.getUser(clerkUserId);
+  const primaryEmail = clerkUser.emailAddresses.find(
+    (e) => e.id === clerkUser.primaryEmailAddressId,
+  )?.emailAddress;
+  if (!primaryEmail) return null;
+  const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+
+  // Email is the unique target — if a row already exists for this email,
+  // update its clerk_id to match the current Clerk identity.
+  const [row] = await db
+    .insert(users)
+    .values({ clerkId: clerkUserId, email: primaryEmail, name })
+    .onConflictDoUpdate({
+      target: users.email,
+      set: { clerkId: clerkUserId, name },
+    })
+    .returning({ id: users.id });
+  return row?.id ?? null;
+}
+
 async function resolveDbOrgId(
   clerkUserId: string,
   clerkOrgId: string | null,
@@ -175,30 +209,11 @@ async function backfillFromClerk(
   try {
     const client = createClerkClient({ secretKey });
 
-    // 1. Upsert the user
-    const [existingUser] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.clerkId, clerkUserId));
-
-    let dbUserId = existingUser?.id;
-    if (!dbUserId) {
-      const clerkUser = await client.users.getUser(clerkUserId);
-      const primaryEmail = clerkUser.emailAddresses.find(
-        (e) => e.id === clerkUser.primaryEmailAddressId,
-      )?.emailAddress;
-      if (!primaryEmail) return;
-      const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
-      const [inserted] = await db
-        .insert(users)
-        .values({ clerkId: clerkUserId, email: primaryEmail, name })
-        .onConflictDoUpdate({
-          target: users.clerkId,
-          set: { email: primaryEmail, name },
-        })
-        .returning({ id: users.id });
-      dbUserId = inserted?.id;
-    }
+    // 1. Resolve the user row, treating email as canonical identity.
+    // A user may have been deleted+re-created in Clerk with a new clerk_id
+    // (especially likely if user.deleted wasn't subscribed on the webhook),
+    // leaving a stale DB row with the old clerk_id but the same email.
+    const dbUserId = await upsertUserByEmail(client, clerkUserId);
     if (!dbUserId) return;
 
     // 2. Pick which Clerk org to sync. Prefer the active one from the JWT;

@@ -113,6 +113,9 @@ async function handleClerkEvent(event: ClerkEvent): Promise<void> {
         .filter(Boolean)
         .join(" ") || null;
 
+      // Email is the canonical identity. If the same email already exists
+      // (e.g. user was deleted and recreated in Clerk with a new id), update
+      // its clerk_id rather than 23505'ing on the email unique constraint.
       await db
         .insert(users)
         .values({
@@ -121,8 +124,8 @@ async function handleClerkEvent(event: ClerkEvent): Promise<void> {
           name,
         })
         .onConflictDoUpdate({
-          target: users.clerkId,
-          set: { email: primaryEmail.email_address, name },
+          target: users.email,
+          set: { clerkId: event.data.id, name },
         });
       break;
     }
