@@ -112,12 +112,8 @@ export async function clerkSessionAuth(
       ...(config.authorizedParties ? { authorizedParties: config.authorizedParties } : {}),
       ...(config.audience ? { audience: config.audience } : {}),
     });
-    if (result.errors) {
-      res.status(401).json({ error: "invalid_session_token" });
-      return;
-    }
 
-    const claims = validateSessionClaims(result.data);
+    const claims = validateSessionClaims(result);
     if (!claims) {
       res.status(401).json({ error: "invalid_session_token" });
       return;
