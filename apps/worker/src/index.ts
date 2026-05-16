@@ -1,4 +1,5 @@
 import "dotenv/config";
+import http from "node:http";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { startIngestConsumer } from "./consumers/ingestConsumer.js";
@@ -47,6 +48,15 @@ function scheduleWeeklyCron(): void {
     setInterval(() => runSentimentFetcher(db).catch(console.error), 7 * 24 * 60 * 60 * 1000);
   }, msUntilNext);
 }
+
+// Health check server so Render can run this as a Web Service
+const port = process.env["PORT"] ?? "3001";
+http.createServer((_, res) => {
+  res.writeHead(200);
+  res.end("ok");
+}).listen(port, () => {
+  console.log(`[worker] health check listening on port ${port}`);
+});
 
 console.log("[worker] starting background workers");
 scheduleDailyCron();
