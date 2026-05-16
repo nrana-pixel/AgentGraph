@@ -81,14 +81,19 @@ export default function ToolDetailPageClient({ slug }: { slug: string }) {
     );
   }
 
-  const isCold = (stats?.totalCalls ?? 0) < 50;
-  const sentiment = tool.sentimentScore ?? 0;
+  const totalCalls = stats?.totalCalls ?? 0;
+  const isCold = totalCalls < 50;
+  // Sentiment and popularity are stored on a 0–100 scale; success rate is 0–1.
+  const sentiment100 = tool.sentimentScore ?? 0;
   const success = stats?.successRate ?? 0;
-  const popularity = stats?.popularityScore ?? 0;
+  const popularity100 = stats?.popularityScore ?? 0;
   const avgLatencyMs = stats?.avgLatencyMs ?? 0;
   const p95LatencyMs = stats?.p95LatencyMs ?? 0;
   const latencyScore = Math.max(0, 1 - avgLatencyMs / 2000);
-  const composite = Math.min(isCold ? 70 : 100, success * 40 + latencyScore * 20 + popularity * 25 + sentiment * 15);
+  const composite = Math.min(
+    isCold ? 70 : 100,
+    success * 40 + latencyScore * 20 + (popularity100 / 100) * 25 + (sentiment100 / 100) * 15,
+  );
 
   return (
     <div className="fade-up">
@@ -104,7 +109,7 @@ export default function ToolDetailPageClient({ slug }: { slug: string }) {
                 {tool.isOpenSource && <Badge tone="ok">open source</Badge>}
                 {tool.isSelfHostable && <Badge>self-hostable</Badge>}
                 {tool.pricingModel && <Badge tone="info">{tool.pricingModel.replace("_", " ")}</Badge>}
-                {isCold ? <Badge tone="info">seeded benchmark</Badge> : <Badge tone="ok"><span className="dot"/>live telemetry</Badge>}
+                {isCold ? <Badge>no telemetry yet</Badge> : <Badge tone="ok"><span className="dot"/>live telemetry</Badge>}
               </div>
               <div className="muted" style={{ fontSize: 13, marginTop: 4, maxWidth: 640 }}>{tool.description}</div>
             </div>
@@ -121,16 +126,24 @@ export default function ToolDetailPageClient({ slug }: { slug: string }) {
         <div className="card card-pad" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
           <div className="mono muted-2" style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase" }}>Composite score</div>
           <div style={{ position: "relative", width: 140, height: 140 }}>
-            <Ring value={composite} size={140} stroke={10}/>
+            <Ring value={isCold ? 0 : composite} size={140} stroke={10}/>
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <div className="mono tnum" style={{ fontSize: 36, fontWeight: 600, letterSpacing: "-0.02em" }}>{Math.round(composite)}</div>
-              <div className="mono muted-2" style={{ fontSize: 10 }}>/ 100</div>
+              {isCold ? (
+                <>
+                  <div className="mono muted-2" style={{ fontSize: 28, fontWeight: 500 }}>—</div>
+                  <div className="mono muted-2" style={{ fontSize: 10 }}>no telemetry</div>
+                </>
+              ) : (
+                <>
+                  <div className="mono tnum" style={{ fontSize: 36, fontWeight: 600, letterSpacing: "-0.02em" }}>{Math.round(composite)}</div>
+                  <div className="mono muted-2" style={{ fontSize: 10 }}>/ 100</div>
+                </>
+              )}
             </div>
           </div>
-          {isCold && <Badge tone="info">capped at 70 (cold-start)</Badge>}
           <div className="hr" style={{ width: "100%" }}/>
           <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "8px 14px", width: "100%", fontSize: 11.5 }}>
-            <span className="muted-2">Total calls</span><span className="mono tnum">{fmtNum(stats?.totalCalls ?? 0)}</span>
+            <span className="muted-2">Total calls</span><span className="mono tnum">{fmtNum(totalCalls)}</span>
             <span className="muted-2">Data source</span><span className="mono">{tool.dataSource}</span>
           </div>
         </div>
@@ -138,29 +151,48 @@ export default function ToolDetailPageClient({ slug }: { slug: string }) {
         <div className="card">
           <div className="hd"><h3>Score breakdown</h3><span className="sub mono">weighted composite</span></div>
           <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
-            <DimensionRow label="Reliability" sub="× 40%" value={success * 100} valueLabel={fmtPct(String(success))} color="var(--success)"/>
-            <DimensionRow label="Latency" sub="× 20%" value={latencyScore * 100} valueLabel={fmtMs(avgLatencyMs)} color="var(--accent)"/>
-            <DimensionRow label="Popularity" sub="× 25%" value={popularity * 100} valueLabel={(popularity * 100).toFixed(0) + "/100"} color="var(--violet)"/>
-            <DimensionRow label="Sentiment" sub="× 15%" value={sentiment * 100} valueLabel={(sentiment * 5).toFixed(1) + " ★"} color="var(--info)"/>
+            {isCold ? (
+              <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+                No telemetry yet for this tool. Reliability, latency, popularity, and
+                sentiment scores appear here once at least 50 real calls have been
+                ingested. The composite score above is capped at 70 until then.
+              </div>
+            ) : (
+              <>
+                <DimensionRow label="Reliability" sub="× 40%" value={success * 100} valueLabel={fmtPct(String(success))} color="var(--success)"/>
+                <DimensionRow label="Latency" sub="× 20%" value={latencyScore * 100} valueLabel={fmtMs(avgLatencyMs)} color="var(--accent)"/>
+                <DimensionRow label="Popularity" sub="× 25%" value={popularity100} valueLabel={popularity100.toFixed(0) + "/100"} color="var(--violet)"/>
+                <DimensionRow label="Sentiment" sub="× 15%" value={sentiment100} valueLabel={(sentiment100 / 20).toFixed(1) + " ★"} color="var(--info)"/>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: "var(--gap-card, 14px)" }}>
         <div className="card">
-          <div className="hd"><h3>Latency distribution</h3><span className="sub mono">last 7 days · {fmtNum(stats?.totalCalls ?? 0)} calls</span></div>
+          <div className="hd"><h3>Latency distribution</h3><span className="sub mono">last 7 days · {fmtNum(totalCalls)} calls</span></div>
           <div style={{ padding: 18 }}>
-            <div className="row" style={{ alignItems: "flex-end", gap: 3, height: 140 }}>
-              {histogram.map((h, i) => (
-                <div key={i} style={{ flex: 1, height: h * 100 + "%", background: "linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 40%, transparent))", borderRadius: 2, minHeight: 2 }}/>
-              ))}
-            </div>
-            <div className="row" style={{ justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>
-              <span>0ms</span>
-              <span>{fmtMs(avgLatencyMs)} (p50)</span>
-              <span style={{ color: "var(--accent)" }}>{fmtMs(p95LatencyMs)} (p95)</span>
-              <span>{fmtMs(p95LatencyMs * 2)}</span>
-            </div>
+            {isCold ? (
+              <div className="muted" style={{ textAlign: "center", padding: "40px 20px", fontSize: 12.5, lineHeight: 1.55 }}>
+                No latency data yet.<br/>
+                Histogram appears once this tool has been called from a trace.
+              </div>
+            ) : (
+              <>
+                <div className="row" style={{ alignItems: "flex-end", gap: 3, height: 140 }}>
+                  {histogram.map((h, i) => (
+                    <div key={i} style={{ flex: 1, height: h * 100 + "%", background: "linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 40%, transparent))", borderRadius: 2, minHeight: 2 }}/>
+                  ))}
+                </div>
+                <div className="row" style={{ justifyContent: "space-between", marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>
+                  <span>0ms</span>
+                  <span>{fmtMs(avgLatencyMs)} (p50)</span>
+                  <span style={{ color: "var(--accent)" }}>{fmtMs(p95LatencyMs)} (p95)</span>
+                  <span>{fmtMs(p95LatencyMs * 2)}</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

@@ -123,17 +123,23 @@ export default function ToolsPage() {
                   <div className="row" style={{ gap: 6 }}>
                     <h4>{tool.name}</h4>
                     {tool.isOpenSource && <Badge>oss</Badge>}
-                    {isCold ? <Badge tone="info">seeded</Badge> : <Badge tone="ok"><span className="dot"/>live</Badge>}
+                    {isCold ? <Badge>no telemetry</Badge> : <Badge tone="ok"><span className="dot"/>live</Badge>}
                   </div>
                   <div className="mono muted-2" style={{ fontSize: 10.5 }}>{tool.category.replace("_", " ")}</div>
                 </div>
               </div>
               <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>{tool.description}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, paddingTop: 4 }}>
-                <Metric label="success" value={fmtPct(tool.successRate)} color="var(--success)"/>
-                <Metric label="p50" value={fmtMs(tool.avgLatencyMs ?? undefined)} color="var(--accent)"/>
-                <Metric label="p95" value={fmtMs(tool.p95LatencyMs ?? undefined)} color="var(--info)"/>
-              </div>
+              {isCold ? (
+                <div className="muted-2 mono" style={{ fontSize: 10.5, padding: "8px 0", textAlign: "center", letterSpacing: "0.03em" }}>
+                  no calls yet — metrics appear after first trace
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, paddingTop: 4 }}>
+                  <Metric label="success" value={fmtPct(tool.successRate)} color="var(--success)"/>
+                  <Metric label="p50" value={fmtMs(tool.avgLatencyMs ?? undefined)} color="var(--accent)"/>
+                  <Metric label="p95" value={fmtMs(tool.p95LatencyMs ?? undefined)} color="var(--info)"/>
+                </div>
+              )}
               <div className="row" style={{ flexWrap: "wrap", gap: 4, paddingTop: 4 }}>
                 {(tool.tags ?? []).slice(0, 3).map(tag => <span key={tag} className="chip" style={{ fontSize: 10.5, padding: "1px 7px" }}>{tag}</span>)}
                 <div className="spacer"/>

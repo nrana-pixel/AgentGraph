@@ -31,26 +31,29 @@ function RankedRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number;
   const successRate = rec.successRate ?? 0;
   const avgLatencyMs = rec.avgLatencyMs ?? 0;
   const p95LatencyMs = rec.p95LatencyMs ?? 0;
-  const popularityScore = rec.popularityScore ?? 0;
-  const sentimentScore = rec.sentimentScore ?? 0;
+  // popularity and sentiment are stored on a 0–100 scale
+  const popularity100 = rec.popularityScore ?? 0;
+  const sentiment100 = rec.sentimentScore ?? 0;
   return (
     <div className="rec-card fade-up" data-compared={compared ? "true" : undefined}>
       <div className="rec-score-wrap">
         <div className="rec-rank">#{rank}</div>
         <div style={{ position: "relative", width: 64, height: 64 }}>
-          <Ring value={rec.score} size={64} stroke={5}/>
+          <Ring value={rec.isCold ? 0 : rec.score} size={64} stroke={5}/>
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span className="mono tnum" style={{ fontSize: 17, fontWeight: 600 }}>{Math.round(rec.score)}</span>
+            {rec.isCold
+              ? <span className="mono muted-2" style={{ fontSize: 18 }}>—</span>
+              : <span className="mono tnum" style={{ fontSize: 17, fontWeight: 600 }}>{Math.round(rec.score)}</span>}
           </div>
         </div>
       </div>
       <div className="col" style={{ gap: 8, flex: 1 }}>
         <div className="row" style={{ gap: 10 }}>
-          <ToolIcon slug={rec.slug} name={rec.name} size={28}/>
+          <ToolIcon slug={rec.slug} name={rec.name} size={28} website={rec.website ?? null}/>
           <h3 style={{ margin: 0, fontSize: 15 }}>{rec.name}</h3>
           <Badge>{rec.category.replace("_", " ")}</Badge>
           {rec.isOpenSource && <Badge tone="ok">oss</Badge>}
-          {rec.isCold ? <Badge tone="info">est.</Badge> : <Badge tone="ok"><span className="dot"/>live</Badge>}
+          {rec.isCold ? <Badge>no telemetry</Badge> : <Badge tone="ok"><span className="dot"/>live</Badge>}
           <div className="spacer"/>
           <button className={"btn btn-sm " + (compared ? "btn-primary" : "")} onClick={e => { e.stopPropagation(); onCompare(); }}>
             {compared ? <><IconCheck/> Compare</> : "+ Compare"}
@@ -58,17 +61,23 @@ function RankedRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number;
           <button className="btn btn-ghost btn-sm" onClick={() => setOpen(o => !o)} style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 180ms" }}><IconChev/></button>
         </div>
         <div className="muted" style={{ fontSize: 12.5 }}>{rec.reason}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, paddingTop: 4 }}>
-          <DimMini label="reliability" value={successRate * 100} valueLabel={fmtPct(String(successRate))} color="var(--success)"/>
-          <DimMini label="latency" value={Math.max(0, 1 - avgLatencyMs / 2000) * 100} valueLabel={fmtMs(avgLatencyMs)} color="var(--accent)"/>
-          <DimMini label="popularity" value={popularityScore * 100} valueLabel={(popularityScore * 100).toFixed(0)} color="var(--violet)"/>
-          <DimMini label="sentiment" value={sentimentScore * 100} valueLabel={(sentimentScore * 5).toFixed(1) + "★"} color="var(--info)"/>
-        </div>
+        {rec.isCold ? (
+          <div className="muted-2 mono" style={{ fontSize: 10.5, padding: "8px 0", letterSpacing: "0.03em" }}>
+            no telemetry — reliability, latency, popularity, and sentiment appear after first trace
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, paddingTop: 4 }}>
+            <DimMini label="reliability" value={successRate * 100} valueLabel={fmtPct(String(successRate))} color="var(--success)"/>
+            <DimMini label="latency" value={Math.max(0, 1 - avgLatencyMs / 2000) * 100} valueLabel={fmtMs(avgLatencyMs)} color="var(--accent)"/>
+            <DimMini label="popularity" value={popularity100} valueLabel={popularity100.toFixed(0)} color="var(--violet)"/>
+            <DimMini label="sentiment" value={sentiment100} valueLabel={(sentiment100 / 20).toFixed(1) + "★"} color="var(--info)"/>
+          </div>
+        )}
         {open && (
           <div className="fade-up" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
             <div className="col" style={{ gap: 6, fontSize: 11.5 }}>
               <div className="row" style={{ gap: 14 }}>
-                <span className="muted-2 mono">p95</span><span className="mono">{fmtMs(p95LatencyMs)}</span>
+                {!rec.isCold && <><span className="muted-2 mono">p95</span><span className="mono">{fmtMs(p95LatencyMs)}</span></>}
                 <span className="muted-2 mono">pricing</span><span className="mono">{rec.pricingModel || "—"}</span>
                 <span className="muted-2 mono">residency</span><span className="mono">{(rec.dataResidency ?? []).join(" · ") || "—"}</span>
               </div>
@@ -88,7 +97,7 @@ function CompactRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number
   const router = useRouter();
   const successRate = rec.successRate ?? 0;
   const avgLatencyMs = rec.avgLatencyMs ?? 0;
-  const sentimentScore = rec.sentimentScore ?? 0;
+  const sentiment100 = rec.sentimentScore ?? 0;
   return (
     <div className="card card-pad fade-up" data-compared={compared ? "true" : undefined} style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative" }}>
       <button className="compact-compare" data-active={compared ? "true" : undefined} onClick={e => { e.stopPropagation(); onCompare(); }} title="Compare">
@@ -97,21 +106,27 @@ function CompactRec({ rec, rank, compared, onCompare }: { rec: Rec; rank: number
       <div onClick={() => router.push("/tools/" + rec.slug)} style={{ display: "contents", cursor: "default" }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
           <span className="mono muted-2" style={{ fontSize: 10.5 }}>#{rank}</span>
-          <span className="mono tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--accent)" }}>{Math.round(rec.score)}<span className="muted-2" style={{ fontSize: 10 }}>/100</span></span>
+          {rec.isCold
+            ? <span className="mono muted-2" style={{ fontSize: 11 }}>no telemetry</span>
+            : <span className="mono tnum" style={{ fontSize: 14, fontWeight: 600, color: "var(--accent)" }}>{Math.round(rec.score)}<span className="muted-2" style={{ fontSize: 10 }}>/100</span></span>}
         </div>
         <div className="row" style={{ gap: 10 }}>
-          <ToolIcon slug={rec.slug} name={rec.name} size={28}/>
+          <ToolIcon slug={rec.slug} name={rec.name} size={28} website={rec.website ?? null}/>
           <div className="col" style={{ gap: 0 }}>
             <h4 style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{rec.name}</h4>
             <span className="mono muted-2" style={{ fontSize: 10.5 }}>{rec.category.replace("_", " ")}</span>
           </div>
         </div>
-        <div className="bar"><div className="bar-fill" style={{ width: rec.score + "%" }}/></div>
-        <div className="row" style={{ justifyContent: "space-between", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
-          <span>{fmtPct(String(successRate))}</span>
-          <span>{fmtMs(avgLatencyMs)}</span>
-          <span>{(sentimentScore * 5).toFixed(1)}★</span>
-        </div>
+        {!rec.isCold && (
+          <>
+            <div className="bar"><div className="bar-fill" style={{ width: rec.score + "%" }}/></div>
+            <div className="row" style={{ justifyContent: "space-between", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
+              <span>{fmtPct(String(successRate))}</span>
+              <span>{fmtMs(avgLatencyMs)}</span>
+              <span>{(sentiment100 / 20).toFixed(1)}★</span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -127,17 +142,20 @@ function GalaxyRec({ recs }: { recs: Rec[] }) {
       <div className="mono muted-2" style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: 10.5, padding: "4px 10px", border: "1px solid var(--border-2)", background: "var(--bg)", borderRadius: 16 }}>task</div>
       {recs.map((r, i) => {
         const angle = (i / recs.length) * Math.PI * 2 - Math.PI / 2;
-        const radius = 12 + (1 - r.score / 100) * 32;
+        // Cold tools have no real score → pin them to the outer ring so radius isn't misleading
+        const radius = r.isCold ? 42 : 12 + (1 - r.score / 100) * 32;
         const x = 50 + Math.cos(angle) * radius;
         const y = 50 + Math.sin(angle) * radius;
         return (
           <div key={r.slug} className="rec-node" data-selected={i === 0 ? "true" : undefined} style={{ left: x + "%", top: y + "%" }} onClick={() => router.push("/tools/" + r.slug)}>
             <div className="row" style={{ gap: 6 }}>
-              <ToolIcon slug={r.slug} name={r.name} size={20}/>
+              <ToolIcon slug={r.slug} name={r.name} size={20} website={r.website ?? null}/>
               <span className="rec-node-name">{r.name}</span>
             </div>
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <span className="rec-node-score">★ {Math.round(r.score)}</span>
+              {r.isCold
+                ? <span className="rec-node-score muted-2">no data</span>
+                : <span className="rec-node-score">★ {Math.round(r.score)}</span>}
               <span className="mono muted-2" style={{ fontSize: 10 }}>#{i + 1}</span>
             </div>
           </div>
@@ -234,6 +252,16 @@ export default function RecommendationsPage() {
         <span className="badge" style={{ borderColor: "color-mix(in srgb, var(--info) 38%, transparent)", color: "var(--info)" }}>sentiment × 15%</span>
       </div>
 
+      {recs.length > 0 && recs.every(r => r.isCold) && (
+        <div className="card card-pad fade-up" style={{ marginBottom: 10, borderColor: "color-mix(in srgb, var(--info) 32%, transparent)", background: "color-mix(in srgb, var(--info) 6%, var(--panel))" }}>
+          <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+            <strong>No real telemetry on any of these tools yet.</strong>{" "}
+            Results are ordered by how well their name and description match your task — not by performance.
+            Reliability, latency, popularity, and sentiment scores will appear here once your project has accumulated traces that call these tools.
+          </div>
+        </div>
+      )}
+
       {recs.length === 0 ? (
         <div className="card card-pad muted" style={{ textAlign: "center" }}>
           {loading ? "Ranking tools…" : "Enter a task above and click Recommend."}
@@ -278,12 +306,21 @@ export default function RecommendationsPage() {
                 { key: "successRate", label: "Reliability", fmt: (v: number) => (v * 100).toFixed(2) + "%", max: 1, color: "var(--success)" },
                 { key: "avgLatencyMs", label: "Avg latency", fmt: (v: number) => v + "ms", inverted: true, max: 2000, color: "var(--accent)" },
               ].map(d => {
-                const vals = compareItems.map(r => ((r as unknown as Record<string, number>)[d.key]) ?? 0);
+                // Only compare across live tools — cold tools have no real value for this metric
+                const liveItems = compareItems.filter(r => !r.isCold);
+                const vals = liveItems.map(r => ((r as unknown as Record<string, number>)[d.key]) ?? 0);
                 const winner = d.inverted ? Math.min(...vals) : Math.max(...vals);
                 return (
                   <React.Fragment key={d.key}>
                     <div className="compare-row-label">{d.label}</div>
                     {compareItems.map(r => {
+                      if (r.isCold) {
+                        return (
+                          <div key={r.slug} className="compare-cell">
+                            <span className="mono muted-2" style={{ fontSize: 11 }}>no telemetry</span>
+                          </div>
+                        );
+                      }
                       const v = ((r as unknown as Record<string, number>)[d.key]) ?? 0;
                       const isWinner = vals.length > 1 && v === winner;
                       const pct = d.inverted ? Math.max(8, 100 - (v / d.max) * 100) : (v / d.max) * 100;
