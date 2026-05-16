@@ -70,7 +70,7 @@ export function OnboardingGate({ children }: { children: React.ReactNode }) {
           <label className="col" style={{ gap: 6 }}>
             <span className="mono muted-2" style={{ fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase" }}>Project name</span>
             <input
-              className="inp"
+              className="input"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="my-agent-app"
