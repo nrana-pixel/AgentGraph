@@ -1,4 +1,14 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npm pack)",
+      "Bash(cp /f/AgentGraph/packages/sdk/agentgraph-sdk-0.1.0.tgz .)",
+      "Bash(node --env-file=.env smoke.mjs)",
+      "Bash(node --env-file=.env openai-smoke.mjs)",
+      "Bash(node --env-file=.env anthropic-smoke.mjs)",
+      "Bash(node --env-file=.env gemini-smoke.mjs)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
