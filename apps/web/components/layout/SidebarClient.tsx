@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
+import { useUser, SignOutButton } from "@clerk/nextjs";
 import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook, IconCost } from "@/components/ui/icons";
 import { Logo } from "@/components/ui/logo";
 
@@ -68,6 +68,28 @@ export function Sidebar() {
           <span style={{ fontSize: 12.5, fontWeight: 500 }}>{displayName}</span>
           {email && <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)" }}>{email}</span>}
         </div>
+        <SignOutButton>
+          <button
+            title="Sign out"
+            aria-label="Sign out"
+            style={{
+              background: "transparent",
+              border: 0,
+              padding: 6,
+              cursor: "pointer",
+              color: "var(--text-3)",
+              borderRadius: 6,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 14H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h3" />
+              <path d="M10 11l3-3-3-3" />
+              <path d="M13 8H6" />
+            </svg>
+          </button>
+        </SignOutButton>
       </div>
     </aside>
   );
