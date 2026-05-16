@@ -179,6 +179,7 @@ a { color: inherit; text-decoration: none; }
   content: ""; position: absolute; inset: -3px; border-radius: 9px;
   border: 1px solid var(--accent); opacity: 0.5;
 }
+.brand-logo { color: var(--text); flex-shrink: 0; }
 .brand-name { font-weight: 600; letter-spacing: -0.01em; font-size: 14px; }
 .brand-tag { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
 

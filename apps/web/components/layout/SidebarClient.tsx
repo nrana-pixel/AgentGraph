@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook, IconCost } from "@/components/ui/icons";
+import { Logo } from "@/components/ui/logo";
 
 const ROUTES = [
   { id: "dashboard",    path: "/dashboard",    label: "Overview",     Icon: IconDashboard, count: null },
@@ -36,7 +37,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">A</div>
+        <Logo size={26} className="brand-logo" />
         <div className="col" style={{ gap: 0 }}>
           <span className="brand-name">AgentGraph</span>
           <span className="brand-tag">v0.4 · acme-prod</span>
