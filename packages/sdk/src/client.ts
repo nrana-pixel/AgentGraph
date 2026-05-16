@@ -2,15 +2,17 @@ import type { IngestPayload, IngestResponse } from "@agentgraph/types";
 
 export interface AgentGraphConfig {
   apiKey: string;
+  baseUrl?: string;
 }
 
-const BASE_URL = "https://api.agentgraph.dev";
+const DEFAULT_BASE_URL = "https://api.agentgraph.dev";
 
 export async function sendIngest(
   config: AgentGraphConfig,
   payload: IngestPayload
 ): Promise<IngestResponse> {
-  const url = `${BASE_URL}/v1/ingest`;
+  const base = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const url = `${base}/v1/ingest`;
 
   const res = await fetch(url, {
     method: "POST",

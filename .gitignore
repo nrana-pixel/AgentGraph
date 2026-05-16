@@ -8,6 +8,7 @@ apps/web/next-env.d.ts
 .DS_Store
 coverage/
 *.log
+*.tgz
 .pnpm-store/
 .claude/settings.local.json
 # Added by code-review-graph
