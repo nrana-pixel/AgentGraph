@@ -162,7 +162,7 @@ a { color: inherit; text-decoration: none; }
 
 /* sidebar internals */
 .brand {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 6px;
   padding: 14px 16px 18px;
   border-bottom: 1px solid var(--border);
   min-height: 48px;
@@ -180,7 +180,7 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--accent); opacity: 0.5;
 }
 .brand-logo { color: var(--text); flex-shrink: 0; }
-.brand-name { font-weight: 600; letter-spacing: -0.01em; font-size: 14px; }
+.brand-name { font-weight: 600; letter-spacing: -0.02em; font-size: 14px; }
 .brand-tag { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
 
 .nav { padding: 8px; display: flex; flex-direction: column; gap: 1px; }

@@ -37,7 +37,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <Logo size={26} className="brand-logo" />
+        <Logo size={28} className="brand-logo" />
         <div className="col" style={{ gap: 0 }}>
           <span className="brand-name">AgentGraph</span>
           <span className="brand-tag">v0.4 · acme-prod</span>
