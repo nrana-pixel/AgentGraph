@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useOrganization } from "@clerk/nextjs";
 import { IconPanelL, IconSearch } from "@/components/ui/icons";
 import { useTweaks } from "@/lib/tweaks";
 import { useBus } from "@/lib/bus";
@@ -9,6 +10,8 @@ export function Topbar() {
   const pathname = usePathname();
   const [tweaks, setTweak] = useTweaks();
   const { emit } = useBus();
+  const { organization } = useOrganization();
+  const orgSlug = organization?.slug || organization?.name?.toLowerCase().replace(/\s+/g, "-") || "personal";
 
   const crumbs = (() => {
     if (pathname === "/dashboard") return [{ here: true, label: "Overview" }];
@@ -32,7 +35,7 @@ export function Topbar() {
         <IconPanelL/>
       </button>
       <div className="crumb">
-        <span className="mono" style={{ color: "var(--text-3)" }}>acme</span>
+        <span className="mono" style={{ color: "var(--text-3)" }}>{orgSlug}</span>
         <span className="sep">/</span>
         {crumbs.map((c, i) => (
           <span key={i}>

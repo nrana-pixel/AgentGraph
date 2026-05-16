@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, SignOutButton } from "@clerk/nextjs";
+import { useUser, useOrganization, SignOutButton } from "@clerk/nextjs";
 import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook, IconCost } from "@/components/ui/icons";
 import { Logo } from "@/components/ui/logo";
 
@@ -17,6 +17,8 @@ const ROUTES = [
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
+  const { organization } = useOrganization();
+  const orgLabel = organization?.slug || organization?.name?.toLowerCase().replace(/\s+/g, "-") || "personal";
   const displayName =
     user?.fullName ||
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
@@ -40,7 +42,7 @@ export function Sidebar() {
         <Logo size={28} className="brand-logo" />
         <div className="col" style={{ gap: 0 }}>
           <span className="brand-name">AgentGraph</span>
-          <span className="brand-tag">v0.4 · acme-prod</span>
+          <span className="brand-tag">v0.4 · {orgLabel}</span>
         </div>
       </div>
       <nav className="nav">
