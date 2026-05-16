@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { verifyToken } from "@clerk/backend";
+import { verifyToken, createClerkClient } from "@clerk/backend";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { organizations, orgMembers, users } from "../db/schema.js";
@@ -121,23 +121,14 @@ export async function clerkSessionAuth(
 
     const clerkOrgId = claims.org_id ?? null;
 
-    let dbOrgId: string | null = null;
-    if (clerkOrgId) {
-      const [org] = await db
-        .select({ id: organizations.id })
-        .from(organizations)
-        .where(eq(organizations.clerkOrgId, clerkOrgId));
-      dbOrgId = org?.id ?? null;
-    } else {
-      // No active org in JWT — fall back to the user's first org membership.
-      // Lets single-org users skip Clerk's "active org" requirement.
-      const [membership] = await db
-        .select({ orgId: orgMembers.orgId })
-        .from(orgMembers)
-        .innerJoin(users, eq(users.id, orgMembers.userId))
-        .where(eq(users.clerkId, claims.sub))
-        .limit(1);
-      dbOrgId = membership?.orgId ?? null;
+    let dbOrgId = await resolveDbOrgId(claims.sub, clerkOrgId);
+
+    // Self-heal: if the DB has no record of this user or their org, the Clerk
+    // webhook may not be configured, may have failed delivery, or may simply
+    // not have arrived yet. Fetch from Clerk and backfill rather than 400'ing.
+    if (dbOrgId === null) {
+      await backfillFromClerk(config.secretKey, claims.sub, clerkOrgId);
+      dbOrgId = await resolveDbOrgId(claims.sub, clerkOrgId);
     }
 
     (req as ClerkAuthedRequest).clerkUserId = claims.sub;
@@ -146,5 +137,101 @@ export async function clerkSessionAuth(
     next();
   } catch {
     res.status(401).json({ error: "invalid_session_token" });
+  }
+}
+
+async function resolveDbOrgId(
+  clerkUserId: string,
+  clerkOrgId: string | null,
+): Promise<string | null> {
+  if (clerkOrgId) {
+    const [org] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.clerkOrgId, clerkOrgId));
+    if (org) return org.id;
+  }
+  // Fall back to the user's first org membership in the DB.
+  const [membership] = await db
+    .select({ orgId: orgMembers.orgId })
+    .from(orgMembers)
+    .innerJoin(users, eq(users.id, orgMembers.userId))
+    .where(eq(users.clerkId, clerkUserId))
+    .limit(1);
+  return membership?.orgId ?? null;
+}
+
+/**
+ * On-demand sync from Clerk → DB. Covers missing/misconfigured webhooks and
+ * race conditions where a user/org was just created and the DB hasn't caught
+ * up. Best-effort: any failure here is logged and swallowed so the caller can
+ * still respond with whatever dbOrgId state remains.
+ */
+async function backfillFromClerk(
+  secretKey: string,
+  clerkUserId: string,
+  clerkOrgId: string | null,
+): Promise<void> {
+  try {
+    const client = createClerkClient({ secretKey });
+
+    // 1. Upsert the user
+    const [existingUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.clerkId, clerkUserId));
+
+    let dbUserId = existingUser?.id;
+    if (!dbUserId) {
+      const clerkUser = await client.users.getUser(clerkUserId);
+      const primaryEmail = clerkUser.emailAddresses.find(
+        (e) => e.id === clerkUser.primaryEmailAddressId,
+      )?.emailAddress;
+      if (!primaryEmail) return;
+      const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+      const [inserted] = await db
+        .insert(users)
+        .values({ clerkId: clerkUserId, email: primaryEmail, name })
+        .onConflictDoUpdate({
+          target: users.clerkId,
+          set: { email: primaryEmail, name },
+        })
+        .returning({ id: users.id });
+      dbUserId = inserted?.id;
+    }
+    if (!dbUserId) return;
+
+    // 2. Pick which Clerk org to sync. Prefer the active one from the JWT;
+    //    otherwise grab the first one the user belongs to.
+    let targetOrgId = clerkOrgId;
+    if (!targetOrgId) {
+      const memberships = await client.users.getOrganizationMembershipList({
+        userId: clerkUserId,
+        limit: 1,
+      });
+      targetOrgId = memberships.data[0]?.organization.id ?? null;
+    }
+    if (!targetOrgId) return;
+
+    // 3. Upsert the org
+    const clerkOrg = await client.organizations.getOrganization({ organizationId: targetOrgId });
+    const [orgInserted] = await db
+      .insert(organizations)
+      .values({ clerkOrgId: clerkOrg.id, name: clerkOrg.name, ownerId: dbUserId })
+      .onConflictDoUpdate({
+        target: organizations.clerkOrgId,
+        set: { name: clerkOrg.name },
+      })
+      .returning({ id: organizations.id });
+    const dbOrgId = orgInserted?.id;
+    if (!dbOrgId) return;
+
+    // 4. Upsert membership
+    await db
+      .insert(orgMembers)
+      .values({ orgId: dbOrgId, userId: dbUserId, role: "owner" })
+      .onConflictDoNothing();
+  } catch (err) {
+    console.error("[clerkSessionAuth] backfill from Clerk failed:", err);
   }
 }

@@ -62,7 +62,7 @@ router.post(
     if (!authed.dbOrgId) {
       res.status(400).json({
         error: "no_active_org",
-        message: "Set an active Clerk organization in your session before creating a project.",
+        message: "Create an organization first — projects live under an organization.",
       });
       return;
     }
