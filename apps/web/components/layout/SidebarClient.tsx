@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, useOrganization, SignOutButton } from "@clerk/nextjs";
-import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconCost } from "@/components/ui/icons";
+import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconCost, IconBook } from "@/components/ui/icons";
 import { Logo } from "@/components/ui/logo";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
@@ -50,6 +50,7 @@ export function Sidebar() {
     if (pathname.startsWith("/recommend")) return "recommendations";
     if (pathname.startsWith("/cost-explorer")) return "cost-explorer";
     if (pathname.startsWith("/settings")) return "settings";
+    if (pathname.startsWith("/docs")) return "docs";
     return "dashboard";
   })();
 
@@ -74,6 +75,11 @@ export function Sidebar() {
             </Link>
           );
         })}
+        <div className="nav-section">Resources</div>
+        <Link href="/docs" className="nav-item" data-active={activeId === "docs" ? "true" : undefined} title="Docs">
+          <IconBook className="nav-icon"/>
+          <span>Docs</span>
+        </Link>
       </nav>
       <div className="sb-foot">
         <div className="avatar">{avatarChar}</div>

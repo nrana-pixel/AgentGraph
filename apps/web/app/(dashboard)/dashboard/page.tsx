@@ -110,20 +110,30 @@ export default function DashboardPage() {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [liveOn, setLiveOn] = useState(true);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const toast = useToast();
 
-  useEffect(() => {
+  const loadData = useCallback(async (showSpinner: "full" | "refresh") => {
     if (!project || !token) return;
-    setStatsLoading(true);
+    if (showSpinner === "full") setStatsLoading(true);
+    else setRefreshing(true);
     const from = new Date(Date.now() - 14 * 86400_000).toISOString();
-    Promise.all([
-      apiGet<StatsResp>(`/v1/projects/${project.id}/stats?from=${from}`, token),
-      apiGet<{ traces: TraceRow[] }>(`/v1/traces?projectId=${project.id}&limit=6`, token),
-    ])
-      .then(([s, t]) => { setStats(s); setTraces(t.traces); })
-      .catch((err: Error) => toast(`Failed to load dashboard: ${err.message}`))
-      .finally(() => setStatsLoading(false));
+    try {
+      const [s, t] = await Promise.all([
+        apiGet<StatsResp>(`/v1/projects/${project.id}/stats?from=${from}`, token),
+        apiGet<{ traces: TraceRow[] }>(`/v1/traces?projectId=${project.id}&limit=6`, token),
+      ]);
+      setStats(s);
+      setTraces(t.traces);
+    } catch (err) {
+      toast(`Failed to load dashboard: ${(err as Error).message}`);
+    } finally {
+      setStatsLoading(false);
+      setRefreshing(false);
+    }
   }, [project, token, toast]);
+
+  useEffect(() => { loadData("full"); }, [loadData]);
 
   useBusEvent("toggleLiveTail", useCallback(() => setLiveOn(o => !o), []));
 
@@ -150,6 +160,20 @@ export default function DashboardPage() {
           <div className="sub">Live agent telemetry across all environments · last 14 days</div>
         </div>
         <div className="row">
+          <button
+            className="btn"
+            onClick={() => loadData("refresh")}
+            disabled={refreshing}
+            title="Refresh data"
+            aria-label="Refresh data"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+                 style={{ transition: "transform 400ms", transform: refreshing ? "rotate(360deg)" : "rotate(0deg)" }}>
+              <path d="M13 8a5 5 0 1 1-1.46-3.54"/>
+              <path d="M13 3v3h-3"/>
+            </svg>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
           <button className={"btn " + (liveOn ? "live-tail-on" : "")} onClick={() => setLiveOn(o => !o)}>
             <span className={liveOn ? "pulse-dot" : ""} style={!liveOn ? { width: 7, height: 7, borderRadius: 50, background: "var(--text-3)", display: "inline-block" } : {}}/> {liveOn ? "Live tail" : "Paused"}
           </button>
