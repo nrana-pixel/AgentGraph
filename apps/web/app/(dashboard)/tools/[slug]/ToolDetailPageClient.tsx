@@ -96,7 +96,7 @@ export default function ToolDetailPageClient({ slug }: { slug: string }) {
         <div>
           <button className="btn btn-ghost btn-sm" onClick={() => router.push("/tools")} style={{ marginBottom: 8 }}>← Catalog</button>
           <div className="row" style={{ gap: 16, alignItems: "flex-start" }}>
-            <ToolIcon slug={tool.slug} name={tool.name} size={56}/>
+            <ToolIcon slug={tool.slug} name={tool.name} size={56} website={tool.website}/>
             <div className="col" style={{ gap: 6 }}>
               <h1 style={{ marginBottom: 2 }}>{tool.name}</h1>
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>

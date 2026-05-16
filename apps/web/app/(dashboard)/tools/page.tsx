@@ -118,7 +118,7 @@ export default function ToolsPage() {
           return (
             <div key={tool.slug} className="tool-card" onClick={() => router.push("/tools/" + tool.slug)}>
               <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
-                <ToolIcon slug={tool.slug} name={tool.name}/>
+                <ToolIcon slug={tool.slug} name={tool.name} website={tool.website}/>
                 <div className="grow col" style={{ gap: 2 }}>
                   <div className="row" style={{ gap: 6 }}>
                     <h4>{tool.name}</h4>

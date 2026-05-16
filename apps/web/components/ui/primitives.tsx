@@ -1,5 +1,5 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 export function Badge({ tone, children }: { tone?: string; children: React.ReactNode }) {
   return <span className="badge" data-tone={tone ?? ""}>{children}</span>;
@@ -87,17 +87,42 @@ export function Ring({ value, max = 100, size = 56, stroke = 5, color }: {
 
 const PALETTES = ["var(--accent)", "var(--info)", "var(--violet)", "var(--success)", "var(--error)"];
 
-export function ToolIcon({ slug, name, size = 36 }: { slug: string; name: string; size?: number }) {
+function faviconUrl(website: string | null | undefined, size: number): string | null {
+  if (!website) return null;
+  try {
+    const host = new URL(website).hostname;
+    const px = Math.max(32, Math.min(128, Math.round(size * 2)));
+    return `https://www.google.com/s2/favicons?domain=${host}&sz=${px}`;
+  } catch {
+    return null;
+  }
+}
+
+export function ToolIcon({ slug, name, size = 36, website }: { slug: string; name: string; size?: number; website?: string | null }) {
   const ch = (name || slug || "?").slice(0, 1).toUpperCase();
   const idx = (slug || "").split("").reduce((a, c) => a + c.charCodeAt(0), 0) % PALETTES.length;
   const color = PALETTES[idx];
+  const src = faviconUrl(website, size);
+  const [failed, setFailed] = useState(false);
+  const showImg = src && !failed;
   return (
     <div className="tool-icon" style={{
       width: size, height: size, color,
       borderColor: `color-mix(in srgb, ${color} 32%, transparent)`,
       background: `color-mix(in srgb, ${color} 10%, var(--panel-2))`,
+      overflow: "hidden",
     }}>
-      {ch}
+      {showImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          width={Math.round(size * 0.66)}
+          height={Math.round(size * 0.66)}
+          onError={() => setFailed(true)}
+          style={{ display: "block" }}
+        />
+      ) : ch}
     </div>
   );
 }
