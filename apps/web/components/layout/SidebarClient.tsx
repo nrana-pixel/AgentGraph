@@ -1,40 +1,23 @@
 "use client";
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, useOrganization, SignOutButton } from "@clerk/nextjs";
 import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconCost, IconBook } from "@/components/ui/icons";
 import { Logo } from "@/components/ui/logo";
-import { useProject } from "@/hooks/useProject";
-import { apiGet } from "@/lib/api";
 
-type CountKey = "traces" | "tools";
-type Counts = Partial<Record<CountKey, number>>;
-
-const ROUTES: { id: string; path: string; label: string; Icon: typeof IconDashboard; countKey: CountKey | null }[] = [
-  { id: "dashboard",    path: "/dashboard",    label: "Overview",     Icon: IconDashboard, countKey: null   },
-  { id: "traces",       path: "/traces",       label: "Traces",       Icon: IconTrace,     countKey: "traces" },
-  { id: "tools",        path: "/tools",        label: "Tool catalog", Icon: IconTools,     countKey: "tools"  },
-  { id: "recommendations", path: "/recommendations", label: "Recommend", Icon: IconRec,  countKey: null },
-  { id: "cost-explorer", path: "/cost-explorer", label: "Cost explorer", Icon: IconCost, countKey: null },
-  { id: "settings",    path: "/settings",    label: "Settings",       Icon: IconSettings,  countKey: null },
+const ROUTES: { id: string; path: string; label: string; Icon: typeof IconDashboard }[] = [
+  { id: "dashboard",    path: "/dashboard",    label: "Overview",     Icon: IconDashboard },
+  { id: "traces",       path: "/traces",       label: "Traces",       Icon: IconTrace     },
+  { id: "tools",        path: "/tools",        label: "Tool catalog", Icon: IconTools     },
+  { id: "recommendations", path: "/recommendations", label: "Recommend", Icon: IconRec  },
+  { id: "cost-explorer", path: "/cost-explorer", label: "Cost explorer", Icon: IconCost },
+  { id: "settings",    path: "/settings",    label: "Settings",       Icon: IconSettings  },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
   const { organization } = useOrganization();
-  const { project, token } = useProject();
-  const [counts, setCounts] = useState<Counts>({});
-
-  useEffect(() => {
-    if (!project || !token) return;
-    let cancelled = false;
-    apiGet<{ traces: number; tools: number }>(`/v1/projects/${project.id}/counts`, token)
-      .then(data => { if (!cancelled) setCounts({ traces: data.traces, tools: data.tools }); })
-      .catch(err => console.error("[sidebar] failed to load counts", err));
-    return () => { cancelled = true; };
-  }, [project, token]);
   const orgLabel = organization?.slug || organization?.name?.toLowerCase().replace(/\s+/g, "-") || "personal";
   const displayName =
     user?.fullName ||
@@ -65,16 +48,12 @@ export function Sidebar() {
       </div>
       <nav className="nav">
         <div className="nav-section">Workspace</div>
-        {ROUTES.map(r => {
-          const count = r.countKey ? counts[r.countKey] : undefined;
-          return (
-            <Link key={r.id} href={r.path} className="nav-item" data-active={activeId === r.id ? "true" : undefined} title={r.label}>
-              <r.Icon className="nav-icon"/>
-              <span>{r.label}</span>
-              {count != null && <span className="nav-count mono">{count}</span>}
-            </Link>
-          );
-        })}
+        {ROUTES.map(r => (
+          <Link key={r.id} href={r.path} className="nav-item" data-active={activeId === r.id ? "true" : undefined} title={r.label}>
+            <r.Icon className="nav-icon"/>
+            <span>{r.label}</span>
+          </Link>
+        ))}
         <div className="nav-section">Resources</div>
         <Link href="/docs" className="nav-item" data-active={activeId === "docs" ? "true" : undefined} title="Docs">
           <IconBook className="nav-icon"/>
