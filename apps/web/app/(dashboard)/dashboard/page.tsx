@@ -169,7 +169,7 @@ export default function DashboardPage() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "var(--gap-card, 14px)" }}>
         <StatCard label="Traces" value={fmtNum(totals.traceCount)} spark={dailyStats.map(d => d.traceCount)} color="var(--accent)" sub="this period"/>
         <StatCard label="Tokens" value={fmtNum(totals.totalTokens)} spark={dailyStats.map(d => d.totalTokens)} color="var(--violet)" sub="across all agents"/>
-        <StatCard label="Cost" value={"$" + totals.totalCostUsd.toFixed(2)} spark={dailyStats.map(d => d.totalCostUsd)} color="var(--info)" sub="USD, all envs"/>
+        <StatCard label="Cost" value={"$" + Number(totals.totalCostUsd ?? 0).toFixed(2)} spark={dailyStats.map(d => Number(d.totalCostUsd ?? 0))} color="var(--info)" sub="USD, all envs"/>
         <StatCard label="Errors" value={String(errorCount)} spark={dailyStats.map(d => d.errorCount)} color="var(--error)" sub={fmtPct(String(totals.errorRate ?? 0)) + " error rate"}/>
       </div>
 
@@ -227,7 +227,7 @@ export default function DashboardPage() {
                   <td><span style={{ fontWeight: 500 }}>{m.model}</span></td>
                   <td className="mono tnum">{fmtNum(m.callCount)}</td>
                   <td className="mono tnum muted">{fmtNum(m.totalTokens)}</td>
-                  <td className="mono tnum">${m.totalCostUsd.toFixed(3)}</td>
+                  <td className="mono tnum">${Number(m.totalCostUsd ?? 0).toFixed(3)}</td>
                 </tr>
               ))}
               {costByModel.filter(m => m.model).length === 0 && (

@@ -136,7 +136,7 @@ router.get(
         completedCount: sql<number>`COUNT(*) FILTER (WHERE ${traces.status} = 'completed')::int`.as("completed_count"),
         errorCount: sql<number>`COUNT(*) FILTER (WHERE ${traces.status} = 'error')::int`.as("error_count"),
         totalTokens: sql<number>`COALESCE(SUM(${traces.totalTokens}), 0)::int`.as("total_tokens"),
-        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)`.as("total_cost_usd"),
+        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`.as("total_cost_usd"),
       })
       .from(traces)
       .where(and(eq(traces.projectId, projectId), gte(traces.startedAt, from), lte(traces.startedAt, to)))
@@ -147,22 +147,22 @@ router.get(
       .select({
         model: traceSteps.model,
         totalTokens: sql<number>`COALESCE(SUM(${traceSteps.totalTokens}), 0)::int`.as("total_tokens"),
-        totalCostUsd: sql<number>`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)`.as("total_cost_usd"),
+        totalCostUsd: sql<number>`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)::float8`.as("total_cost_usd"),
         callCount: sql<number>`COUNT(*)::int`.as("call_count"),
       })
       .from(traceSteps)
       .innerJoin(traces, eq(traceSteps.traceId, traces.id))
       .where(and(eq(traces.projectId, projectId), eq(traceSteps.type, "llm_call"), gte(traces.startedAt, from), lte(traces.startedAt, to)))
       .groupBy(traceSteps.model)
-      .orderBy(desc(sql`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)`));
+      .orderBy(desc(sql`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)::float8`));
 
     const topAgents = await db
       .select({
         agentId: traces.agentId,
         traceCount: sql<number>`COUNT(*)::int`.as("trace_count"),
-        errorRate: sql<number>`ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4)`.as("error_rate"),
+        errorRate: sql<number>`(ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4))::float8`.as("error_rate"),
         totalTokens: sql<number>`COALESCE(SUM(${traces.totalTokens}), 0)::int`.as("total_tokens"),
-        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)`.as("total_cost_usd"),
+        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`.as("total_cost_usd"),
         avgLatencyMs: sql<number>`ROUND(AVG(${traces.totalLatencyMs}))::int`.as("avg_latency_ms"),
       })
       .from(traces)
@@ -174,9 +174,9 @@ router.get(
     const [totals] = await db
       .select({
         traceCount: sql<number>`COUNT(*)::int`,
-        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)`,
+        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`,
         totalTokens: sql<number>`COALESCE(SUM(${traces.totalTokens}), 0)::int`,
-        errorRate: sql<number>`ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4)`,
+        errorRate: sql<number>`(ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4))::float8`,
       })
       .from(traces)
       .where(and(eq(traces.projectId, projectId), gte(traces.startedAt, from), lte(traces.startedAt, to)));
