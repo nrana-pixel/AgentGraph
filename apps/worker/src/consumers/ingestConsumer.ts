@@ -26,25 +26,33 @@ export async function startIngestConsumer(
     if (!result) continue;
 
     const [, raw] = result;
-    let parsed: ReturnType<typeof IngestPayloadSchema.safeParse>;
-
+    let rawJson: unknown;
     try {
-      parsed = IngestPayloadSchema.safeParse(JSON.parse(raw));
+      rawJson = JSON.parse(raw);
     } catch {
       console.error("[ingest-consumer] JSON parse error");
       continue;
     }
 
+    // The ingest route attaches projectId before queuing. Pull it out of the
+    // raw payload BEFORE schema validation, because IngestPayloadSchema does
+    // not declare projectId (the SDK never sends one) and Zod will strip it.
+    const projectId =
+      typeof rawJson === "object" && rawJson !== null && typeof (rawJson as { projectId?: unknown }).projectId === "string"
+        ? (rawJson as { projectId: string }).projectId
+        : null;
+    if (!projectId) {
+      console.error("[ingest-consumer] queued payload missing projectId; dropping");
+      continue;
+    }
+
+    const parsed = IngestPayloadSchema.safeParse(rawJson);
     if (!parsed.success) {
       console.error("[ingest-consumer] schema validation failed:", parsed.error.message);
       continue;
     }
 
-    // The ingest route attaches projectId before queuing
-    const payload = parsed.data as typeof parsed.data & {
-      projectId: string;
-      traceId: string;
-    };
+    const payload = { ...parsed.data, projectId };
 
     const traceId = payload.traceId ?? uuidv4();
     let committedCostUsd: number | null = null;
