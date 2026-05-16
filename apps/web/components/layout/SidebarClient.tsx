@@ -1,23 +1,40 @@
 "use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, useOrganization, SignOutButton } from "@clerk/nextjs";
-import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook, IconCost } from "@/components/ui/icons";
+import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconCost } from "@/components/ui/icons";
 import { Logo } from "@/components/ui/logo";
+import { useProject } from "@/hooks/useProject";
+import { apiGet } from "@/lib/api";
 
-const ROUTES = [
-  { id: "dashboard",    path: "/dashboard",    label: "Overview",     Icon: IconDashboard, count: null },
-  { id: "traces",       path: "/traces",       label: "Traces",       Icon: IconTrace,     count: 64   },
-  { id: "tools",        path: "/tools",        label: "Tool catalog", Icon: IconTools,     count: 30   },
-  { id: "recommendations", path: "/recommendations", label: "Recommend", Icon: IconRec,  count: null },
-  { id: "cost-explorer", path: "/cost-explorer", label: "Cost explorer", Icon: IconCost, count: null },
-  { id: "settings",    path: "/settings",    label: "Settings",       Icon: IconSettings,  count: null },
+type CountKey = "traces" | "tools";
+type Counts = Partial<Record<CountKey, number>>;
+
+const ROUTES: { id: string; path: string; label: string; Icon: typeof IconDashboard; countKey: CountKey | null }[] = [
+  { id: "dashboard",    path: "/dashboard",    label: "Overview",     Icon: IconDashboard, countKey: null   },
+  { id: "traces",       path: "/traces",       label: "Traces",       Icon: IconTrace,     countKey: "traces" },
+  { id: "tools",        path: "/tools",        label: "Tool catalog", Icon: IconTools,     countKey: "tools"  },
+  { id: "recommendations", path: "/recommendations", label: "Recommend", Icon: IconRec,  countKey: null },
+  { id: "cost-explorer", path: "/cost-explorer", label: "Cost explorer", Icon: IconCost, countKey: null },
+  { id: "settings",    path: "/settings",    label: "Settings",       Icon: IconSettings,  countKey: null },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
   const { organization } = useOrganization();
+  const { project, token } = useProject();
+  const [counts, setCounts] = useState<Counts>({});
+
+  useEffect(() => {
+    if (!project || !token) return;
+    let cancelled = false;
+    apiGet<{ traces: number; tools: number }>(`/v1/projects/${project.id}/counts`, token)
+      .then(data => { if (!cancelled) setCounts({ traces: data.traces, tools: data.tools }); })
+      .catch(err => console.error("[sidebar] failed to load counts", err));
+    return () => { cancelled = true; };
+  }, [project, token]);
   const orgLabel = organization?.slug || organization?.name?.toLowerCase().replace(/\s+/g, "-") || "personal";
   const displayName =
     user?.fullName ||
@@ -47,22 +64,16 @@ export function Sidebar() {
       </div>
       <nav className="nav">
         <div className="nav-section">Workspace</div>
-        {ROUTES.map(r => (
-          <Link key={r.id} href={r.path} className="nav-item" data-active={activeId === r.id ? "true" : undefined} title={r.label}>
-            <r.Icon className="nav-icon"/>
-            <span>{r.label}</span>
-            {r.count != null && <span className="nav-count mono">{r.count}</span>}
-          </Link>
-        ))}
-        <div className="nav-section">Resources</div>
-        <a className="nav-item" title="Docs">
-          <IconBook className="nav-icon"/><span>Docs</span>
-        </a>
-        <a className="nav-item" title="Status">
-          <svg className="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><path d="M2 8h3l2-5 2 10 2-5h3"/></svg>
-          <span>Status</span>
-          <span className="nav-count" style={{ color: "var(--success)", borderColor: "color-mix(in srgb, var(--success) 32%, transparent)" }}>● ok</span>
-        </a>
+        {ROUTES.map(r => {
+          const count = r.countKey ? counts[r.countKey] : undefined;
+          return (
+            <Link key={r.id} href={r.path} className="nav-item" data-active={activeId === r.id ? "true" : undefined} title={r.label}>
+              <r.Icon className="nav-icon"/>
+              <span>{r.label}</span>
+              {count != null && <span className="nav-count mono">{count}</span>}
+            </Link>
+          );
+        })}
       </nav>
       <div className="sb-foot">
         <div className="avatar">{avatarChar}</div>

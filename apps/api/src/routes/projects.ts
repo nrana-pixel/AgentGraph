@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { traces, traceSteps, projects, organizations, apiKeys, webhooks, orgMembers, users } from "../db/schema.js";
+import { traces, traceSteps, tools, projects, organizations, apiKeys, webhooks, orgMembers, users } from "../db/schema.js";
 import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { flexAuth } from "../middleware/flexAuth.js";
@@ -182,6 +182,42 @@ router.get(
       .where(and(eq(traces.projectId, projectId), gte(traces.startedAt, from), lte(traces.startedAt, to)));
 
     res.json({ projectId, from: from.toISOString(), to: to.toISOString(), totals, dailyStats, costByModel, topAgents });
+  },
+);
+
+router.get(
+  "/:id/counts",
+  rateLimiter,
+  flexAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params as { id: string };
+
+    let projectId: string;
+    if ((req as AuthedRequest).projectId) {
+      if ((req as AuthedRequest).projectId !== id) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      projectId = id;
+    } else {
+      const resolved = await resolveProjectFromClerk(req, res);
+      if (!resolved) return;
+      projectId = resolved;
+    }
+
+    const [traceTotals] = await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(traces)
+      .where(eq(traces.projectId, projectId));
+
+    const [toolTotals] = await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(tools);
+
+    res.json({
+      traces: traceTotals?.count ?? 0,
+      tools: toolTotals?.count ?? 0,
+    });
   },
 );
 

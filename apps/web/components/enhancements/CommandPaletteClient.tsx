@@ -67,7 +67,7 @@ export function CommandPalette() {
     list.push({ id: "a:density", label: "Cycle density", group: "Action", action: () => { const o = ["compact","regular","cozy"]; setTweak("density", o[(o.indexOf(tweaks.density)+1)%3] as "compact"|"regular"|"cozy"); setOpen(false); } });
     list.push({ id: "a:newkey", label: "Create API key", group: "Action", action: () => { router.push("/settings"); setOpen(false); } });
     tools.forEach(t =>
-      list.push({ id: "t:" + t.slug, label: t.name, hint: t.category.replace("_", " "), group: "Tool", action: () => { router.push("/tools/" + t.slug); setOpen(false); }, icon: <ToolIcon slug={t.slug} name={t.name} size={20}/> })
+      list.push({ id: "t:" + t.slug, label: t.name, hint: t.category.replace("_", " "), group: "Tool", action: () => { router.push("/tools/" + t.slug); setOpen(false); }, icon: <ToolIcon slug={t.slug} name={t.name} size={20} website={t.website}/> })
     );
     agents.forEach(a =>
       list.push({ id: "ag:" + a, label: a, hint: "agent", group: "Agent", action: () => { router.push("/traces?agent=" + encodeURIComponent(a)); setOpen(false); } })
