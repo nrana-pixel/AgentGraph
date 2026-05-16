@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useUser } from "@clerk/nextjs";
 import { IconDashboard, IconTrace, IconTools, IconRec, IconSettings, IconBook, IconCost } from "@/components/ui/icons";
 
 const ROUTES = [
@@ -14,6 +15,15 @@ const ROUTES = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user } = useUser();
+  const displayName =
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+    user?.username ||
+    user?.primaryEmailAddress?.emailAddress?.split("@")[0] ||
+    "Account";
+  const email = user?.primaryEmailAddress?.emailAddress ?? "";
+  const avatarChar = (displayName[0] ?? "?").toUpperCase();
   const activeId = (() => {
     if (pathname.startsWith("/traces")) return "traces";
     if (pathname.startsWith("/tools")) return "tools";
@@ -52,10 +62,10 @@ export function Sidebar() {
         </a>
       </nav>
       <div className="sb-foot">
-        <div className="avatar">N</div>
+        <div className="avatar">{avatarChar}</div>
         <div className="sb-foot-content col" style={{ gap: 0, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 500 }}>Nadia Pérez</span>
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)" }}>nadia@acme.dev</span>
+          <span style={{ fontSize: 12.5, fontWeight: 500 }}>{displayName}</span>
+          {email && <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)" }}>{email}</span>}
         </div>
       </div>
     </aside>
