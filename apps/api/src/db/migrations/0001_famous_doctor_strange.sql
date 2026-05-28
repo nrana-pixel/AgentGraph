@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_api_keys_key_prefix" ON "api_keys" USING btree ("key_prefix");

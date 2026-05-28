@@ -62,18 +62,24 @@ export const projects = pgTable("projects", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-export const apiKeys = pgTable("api_keys", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  projectId: uuid("project_id")
-    .references(() => projects.id, { onDelete: "cascade" })
-    .notNull(),
-  keyHash: text("key_hash").unique().notNull(), // bcrypt hash of full key
-  keyPrefix: text("key_prefix").notNull(), // e.g. "ag_live_xxxx" for display
-  name: text("name"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
-  revoked: boolean("revoked").default(false).notNull(),
-});
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .references(() => projects.id, { onDelete: "cascade" })
+      .notNull(),
+    keyHash: text("key_hash").unique().notNull(), // bcrypt hash of full key
+    keyPrefix: text("key_prefix").notNull(), // e.g. "ag_live_xxxx" — used to scope the auth lookup
+    name: text("name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revoked: boolean("revoked").default(false).notNull(),
+  },
+  // Auth narrows candidate keys by prefix before bcrypt-verifying, so this
+  // lookup must be indexed — otherwise every request scans the whole table.
+  (t) => [index("idx_api_keys_key_prefix").on(t.keyPrefix)],
+);
 
 // ---------------------------------------------------------------------------
 // Traces

@@ -13,12 +13,17 @@ import { v4 as uuidv4 } from "uuid";
 
 const router = Router();
 
-async function resolveProjectFromClerk(req: Request, res: Response): Promise<string | null> {
+interface ResolvedProject {
+  projectId: string;
+  role: string;
+}
+
+async function resolveProjectFromClerk(req: Request, res: Response): Promise<ResolvedProject | null> {
   const authed = req as ClerkAuthedRequest;
   const { id } = req.params as { id: string };
 
   const [row] = await db
-    .select({ projectId: projects.id })
+    .select({ projectId: projects.id, role: orgMembers.role })
     .from(projects)
     .innerJoin(organizations, eq(projects.orgId, organizations.id))
     .innerJoin(orgMembers, eq(organizations.id, orgMembers.orgId))
@@ -29,7 +34,21 @@ async function resolveProjectFromClerk(req: Request, res: Response): Promise<str
     res.status(403).json({ error: "forbidden" });
     return null;
   }
-  return row.projectId;
+  return { projectId: row.projectId, role: row.role };
+}
+
+// Sensitive mutations (minting/revoking API keys, managing webhooks) are
+// restricted to org owners/admins. API-key auth is a machine credential that
+// is already project-scoped and admin-issued, so it is exempt.
+const PRIVILEGED_ROLES = new Set(["owner", "admin"]);
+
+function denyIfNotPrivileged(role: string, res: Response): boolean {
+  if (PRIVILEGED_ROLES.has(role)) return false;
+  res.status(403).json({
+    error: "insufficient_role",
+    message: "Only organization owners or admins can perform this action.",
+  });
+  return true;
 }
 
 router.get(
@@ -108,7 +127,7 @@ router.get(
     } else {
       const resolved = await resolveProjectFromClerk(req, res);
       if (!resolved) return;
-      projectId = resolved;
+      projectId = resolved.projectId;
     }
 
     const fromParam = req.query["from"] as string | undefined;
@@ -202,7 +221,7 @@ router.get(
     } else {
       const resolved = await resolveProjectFromClerk(req, res);
       if (!resolved) return;
-      projectId = resolved;
+      projectId = resolved.projectId;
     }
 
     const rows = await db
@@ -239,7 +258,8 @@ router.post(
     } else {
       const resolved = await resolveProjectFromClerk(req, res);
       if (!resolved) return;
-      projectId = resolved;
+      if (denyIfNotPrivileged(resolved.role, res)) return;
+      projectId = resolved.projectId;
     }
 
     const parsed = CreateApiKeySchema.safeParse(req.body);
@@ -250,7 +270,7 @@ router.post(
 
     const rawKey = `ag_live_${uuidv4().replace(/-/g, "")}`;
     const keyPrefix = rawKey.slice(0, 16);
-    const keyHash = await bcrypt.hash(rawKey, 10);
+    const keyHash = await bcrypt.hash(rawKey, 12);
 
     const [apiKey] = await db
       .insert(apiKeys)
@@ -284,7 +304,8 @@ router.delete(
     } else {
       const resolved = await resolveProjectFromClerk(req, res);
       if (!resolved) return;
-      projectId = resolved;
+      if (denyIfNotPrivileged(resolved.role, res)) return;
+      projectId = resolved.projectId;
     }
 
     const updated = await db
@@ -319,7 +340,7 @@ router.get(
     } else {
       const resolved = await resolveProjectFromClerk(req, res);
       if (!resolved) return;
-      projectId = resolved;
+      projectId = resolved.projectId;
     }
 
     const PLAN_LIMITS: Record<string, number> = { free: 10_000, pro: 500_000, team: 5_000_000 };
@@ -363,7 +384,7 @@ router.get(
     } else {
       const resolved = await resolveProjectFromClerk(req, res);
       if (!resolved) return;
-      projectId = resolved;
+      projectId = resolved.projectId;
     }
 
     const rows = await db

@@ -13,6 +13,27 @@ export interface AuthedRequest extends Request {
 // Cache validated keys in memory for 60s to reduce bcrypt overhead
 const keyCache = new Map<string, { projectId: string; orgId: string; orgPlan: string; expiresAt: number }>();
 const KEY_CACHE_TTL_MS = 60_000;
+const KEY_CACHE_MAX_ENTRIES = 10_000;
+
+// The display prefix persisted at mint time is rawKey.slice(0, 16)
+// ("ag_live_" + 8 hex). Auth narrows candidates by this exact prefix.
+const KEY_PREFIX_LEN = 16;
+
+// Bound the cache: drop expired entries first, then evict oldest (Map keeps
+// insertion order) until under the cap. Prevents unbounded growth on a
+// long-lived process that sees many distinct keys.
+function evictKeyCacheIfNeeded(): void {
+  if (keyCache.size < KEY_CACHE_MAX_ENTRIES) return;
+  const now = Date.now();
+  for (const [k, v] of keyCache) {
+    if (v.expiresAt <= now) keyCache.delete(k);
+  }
+  while (keyCache.size >= KEY_CACHE_MAX_ENTRIES) {
+    const oldest = keyCache.keys().next().value;
+    if (oldest === undefined) break;
+    keyCache.delete(oldest);
+  }
+}
 
 export async function apiKeyAuth(
   req: Request,
@@ -37,8 +58,10 @@ export async function apiKeyAuth(
     return;
   }
 
-  // Fetch all non-revoked keys for prefix match then bcrypt verify
-  const prefix = rawKey.slice(0, 12); // "ag_live_xxxx" first 12 chars
+  // Narrow to the (typically single) key sharing this exact display prefix,
+  // then bcrypt-verify. The idx_api_keys_key_prefix index keeps this O(1)
+  // regardless of how many keys exist system-wide.
+  const prefix = rawKey.slice(0, KEY_PREFIX_LEN);
   const rows = await db
     .select({
       id: apiKeys.id,
@@ -50,7 +73,7 @@ export async function apiKeyAuth(
     .from(apiKeys)
     .innerJoin(projects, eq(apiKeys.projectId, projects.id))
     .innerJoin(organizations, eq(projects.orgId, organizations.id))
-    .where(and(eq(apiKeys.revoked, false)));
+    .where(and(eq(apiKeys.keyPrefix, prefix), eq(apiKeys.revoked, false)));
 
   for (const row of rows) {
     const match = await bcrypt.compare(rawKey, row.keyHash);
@@ -61,6 +84,7 @@ export async function apiKeyAuth(
         .where(eq(apiKeys.id, row.id))
         .catch(() => {});
 
+      evictKeyCacheIfNeeded();
       keyCache.set(rawKey, {
         projectId: row.projectId,
         orgId: row.orgId,

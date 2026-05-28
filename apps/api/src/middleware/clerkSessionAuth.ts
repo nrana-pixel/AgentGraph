@@ -43,9 +43,11 @@ export function reportClerkSessionAuthConfig(): void {
   // In prod: set to your dashboard's public origin(s), e.g.
   //   CLERK_AUTHORIZED_PARTIES=https://app.agentgraph.dev,https://agentgraph.dev
   // Mitigates subdomain cookie leak — see Clerk JWT verification docs.
+  // Hard-fail at boot in production: shipping without azp validation silently
+  // weakens token-origin checks, so refuse to start rather than warn.
   if (process.env["NODE_ENV"] === "production" && !getAuthorizedParties()) {
-    console.warn(
-      "[api] CLERK_AUTHORIZED_PARTIES is unset in production; Clerk azp claim will not be validated.",
+    throw new Error(
+      "CLERK_AUTHORIZED_PARTIES must be set in production so Clerk's azp claim is validated.",
     );
   }
 }
@@ -141,14 +143,65 @@ export async function clerkSessionAuth(
 }
 
 /**
- * Resolve a Clerk user → DB user row, treating email as canonical identity.
- * Returns the DB user id (uuid) or null if the Clerk user has no primary
- * email or the lookup fails.
+ * Strict-isolation identity upsert. Resolves a (clerkId, email) pair to a DB
+ * user row id, or null if no row can be safely owned by this identity.
  *
- * Why email and not clerk_id: if a user is deleted + recreated in Clerk (or
- * the user.deleted webhook is missed), Clerk issues a new clerk_id but the
- * email is reused. Keying on clerk_id alone causes a UNIQUE(email) violation
- * on insert.
+ * SECURITY — we deliberately never rebind an existing email to a new
+ * clerk_id. Corporate email aliases get reassigned to new people; if a Clerk
+ * user is deleted (or the user.deleted webhook is missed) and the email is
+ * later reused by a new hire, transferring the old clerk_id would hand the
+ * new person the previous owner's org, projects, API keys and billing. When
+ * the email is already bound to a different identity we refuse (return null);
+ * recovering a legitimately recreated account requires an explicit, audited
+ * flow rather than silent inheritance.
+ */
+export async function resolveUserIdentity(
+  clerkId: string,
+  email: string,
+  name: string | null,
+): Promise<string | null> {
+  const [byClerk] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.clerkId, clerkId));
+  const [byEmail] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email));
+
+  if (byClerk) {
+    // Same identity. Keep name in sync, and move the email only if it isn't
+    // already claimed by a different identity.
+    if (byEmail && byEmail.id !== byClerk.id) {
+      console.warn(
+        "[identity] email is bound to a different clerk identity; leaving existing binding intact",
+      );
+      await db.update(users).set({ name }).where(eq(users.id, byClerk.id));
+    } else {
+      await db.update(users).set({ email, name }).where(eq(users.id, byClerk.id));
+    }
+    return byClerk.id;
+  }
+
+  if (byEmail) {
+    // New clerk_id for an email that already owns data — refuse to inherit.
+    console.warn(
+      "[identity] refusing to rebind an existing email to a new clerk_id (strict isolation)",
+    );
+    return null;
+  }
+
+  const [inserted] = await db
+    .insert(users)
+    .values({ clerkId, email, name })
+    .onConflictDoNothing()
+    .returning({ id: users.id });
+  return inserted?.id ?? null;
+}
+
+/**
+ * Resolve a Clerk user → DB user row id, fetching the canonical email/name
+ * from Clerk first. Delegates the ownership decision to resolveUserIdentity.
  */
 export async function upsertUserByEmail(
   client: ReturnType<typeof createClerkClient>,
@@ -161,17 +214,7 @@ export async function upsertUserByEmail(
   if (!primaryEmail) return null;
   const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
 
-  // Email is the unique target — if a row already exists for this email,
-  // update its clerk_id to match the current Clerk identity.
-  const [row] = await db
-    .insert(users)
-    .values({ clerkId: clerkUserId, email: primaryEmail, name })
-    .onConflictDoUpdate({
-      target: users.email,
-      set: { clerkId: clerkUserId, name },
-    })
-    .returning({ id: users.id });
-  return row?.id ?? null;
+  return resolveUserIdentity(clerkUserId, primaryEmail, name);
 }
 
 async function resolveDbOrgId(

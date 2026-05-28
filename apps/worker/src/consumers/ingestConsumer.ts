@@ -7,9 +7,29 @@ import { v4 as uuidv4 } from "uuid";
 import { eq, and } from "drizzle-orm";
 import { IngestPayloadSchema } from "@agentgraph/types";
 import { computeCost } from "../lib/modelCosts.js";
+import { assertPublicWebhookUrl } from "../lib/ssrfGuard.js";
+import { deliverWebhook } from "../lib/webhookDelivery.js";
+import { decryptSecret } from "../lib/secretCrypto.js";
 import { traces, traceSteps, tools, webhooks } from "../db/schema.js";
 
 const QUEUE_KEY = "agentgraph:ingest:queue";
+const DEAD_LETTER_KEY = "agentgraph:ingest:dead";
+const DEAD_LETTER_MAX = 10_000;
+
+// Park a payload we can't process instead of dropping it silently. Records
+// stay replayable and the list depth is alertable; trimmed so a flood of bad
+// input can't grow Redis without bound.
+async function deadLetter(redis: Redis, raw: string, reason: string): Promise<void> {
+  try {
+    await redis.lpush(
+      DEAD_LETTER_KEY,
+      JSON.stringify({ reason, payload: raw, failedAt: new Date().toISOString() }),
+    );
+    await redis.ltrim(DEAD_LETTER_KEY, 0, DEAD_LETTER_MAX - 1);
+  } catch (err) {
+    console.error("[ingest-consumer] failed to write dead-letter record:", err);
+  }
+}
 
 export async function startIngestConsumer(
   redisUrl: string,
@@ -31,6 +51,7 @@ export async function startIngestConsumer(
       rawJson = JSON.parse(raw);
     } catch {
       console.error("[ingest-consumer] JSON parse error");
+      await deadLetter(redis, raw, "json_parse_error");
       continue;
     }
 
@@ -43,12 +64,14 @@ export async function startIngestConsumer(
         : null;
     if (!projectId) {
       console.error("[ingest-consumer] queued payload missing projectId; dropping");
+      await deadLetter(redis, raw, "missing_project_id");
       continue;
     }
 
     const parsed = IngestPayloadSchema.safeParse(rawJson);
     if (!parsed.success) {
       console.error("[ingest-consumer] schema validation failed:", parsed.error.message);
+      await deadLetter(redis, raw, `schema_validation_failed: ${parsed.error.message}`);
       continue;
     }
 
@@ -161,6 +184,7 @@ export async function startIngestConsumer(
       }
     } catch (err) {
       console.error("[ingest-consumer] db transaction failed:", err);
+      await deadLetter(redis, raw, `db_transaction_failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
@@ -194,38 +218,27 @@ async function fireCostSpikeWebhooks(
     timestamp: new Date().toISOString(),
   });
 
-  const eligible = targets.filter((t) => {
-    if (!t.events?.includes("cost_spike")) return false;
-    // Defense-in-depth: re-validate scheme even if schema already enforces it
-    try {
-      const parsed = new URL(t.url);
-      if (parsed.protocol !== "https:") {
-        console.warn(`[ingest-consumer] skipping non-https webhook url: ${t.url}`);
-        return false;
-      }
-    } catch {
-      console.warn(`[ingest-consumer] skipping malformed webhook url: ${t.url}`);
-      return false;
-    }
-    return true;
-  });
+  const eligible = targets.filter((t) => t.events?.includes("cost_spike"));
 
   const results = await Promise.allSettled(
     eligible.map(async (target) => {
-      const sig = createHmac("sha256", target.secret)
-        .update(body)
-        .digest("hex");
-      const res = await fetch(target.url, {
-        method: "POST",
-        headers: {
+      // SSRF guard: protocol + literal-IP fast check here; deliverWebhook
+      // additionally re-validates the resolved IP at connection time.
+      await assertPublicWebhookUrl(target.url);
+
+      const secret = decryptSecret(target.secret);
+      const sig = createHmac("sha256", secret).update(body).digest("hex");
+      const { status } = await deliverWebhook(
+        target.url,
+        {
           "Content-Type": "application/json",
           "X-AgentGraph-Signature": `sha256=${sig}`,
         },
         body,
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!res.ok) {
-        console.warn(`[ingest-consumer] webhook ${target.url} returned ${res.status}`);
+        5000,
+      );
+      if (status < 200 || status >= 300) {
+        console.warn(`[ingest-consumer] webhook ${target.url} returned ${status}`);
       }
     }),
   );

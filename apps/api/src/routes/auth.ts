@@ -3,6 +3,7 @@ import { Webhook } from "svix";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, organizations, orgMembers } from "../db/schema.js";
+import { resolveUserIdentity } from "../middleware/clerkSessionAuth.js";
 
 const router = Router();
 
@@ -113,20 +114,10 @@ async function handleClerkEvent(event: ClerkEvent): Promise<void> {
         .filter(Boolean)
         .join(" ") || null;
 
-      // Email is the canonical identity. If the same email already exists
-      // (e.g. user was deleted and recreated in Clerk with a new id), update
-      // its clerk_id rather than 23505'ing on the email unique constraint.
-      await db
-        .insert(users)
-        .values({
-          clerkId: event.data.id,
-          email: primaryEmail.email_address,
-          name,
-        })
-        .onConflictDoUpdate({
-          target: users.email,
-          set: { clerkId: event.data.id, name },
-        });
+      // Strict isolation: resolveUserIdentity refuses to rebind an email that
+      // already belongs to a different clerk_id, so a reused email can never
+      // silently inherit another user's data.
+      await resolveUserIdentity(event.data.id, primaryEmail.email_address, name);
       break;
     }
 

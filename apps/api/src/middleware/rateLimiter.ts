@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { createHash } from "crypto";
 import { redis, RATE_LIMIT_PREFIX } from "../db/redis.js";
 
 const WINDOW_MS = 60_000; // 1 minute
@@ -21,8 +22,12 @@ export async function rateLimiter(
     return;
   }
 
-  // Use the first 20 chars of the key as the rate limit identifier
-  const keyId = authHeader.slice(7, 27);
+  // Bucket per distinct credential. Hashing the full token is required:
+  // a fixed-length prefix of a Clerk session JWT is the (identical) JWT
+  // header, which would collapse every dashboard user into one shared
+  // bucket. We never store the raw token — only its digest.
+  const token = authHeader.slice(7);
+  const keyId = createHash("sha256").update(token).digest("hex");
   const redisKey = `${RATE_LIMIT_PREFIX}${keyId}`;
   const now = Date.now();
   const windowStart = now - WINDOW_MS;

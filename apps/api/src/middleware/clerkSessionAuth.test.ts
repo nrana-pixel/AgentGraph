@@ -7,14 +7,36 @@ vi.mock("@clerk/backend", () => ({
 }));
 
 vi.mock("../db/index.js", () => ({
-  db: { select: vi.fn() },
+  db: { select: vi.fn(), update: vi.fn(), insert: vi.fn() },
 }));
 
 import { verifyToken } from "@clerk/backend";
+import { db } from "../db/index.js";
 import {
   clerkSessionAuth,
   getClerkSessionAuthConfig,
+  resolveUserIdentity,
 } from "./clerkSessionAuth.js";
+
+// Chainable mock that resolves to `rows` when awaited, regardless of which
+// query-builder methods were called on it.
+function makeChain(rows: unknown[]) {
+  const chain: Record<string, unknown> = {
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    set: vi.fn().mockReturnThis(),
+    values: vi.fn().mockReturnThis(),
+    onConflictDoNothing: vi.fn().mockReturnThis(),
+    returning: vi.fn().mockReturnThis(),
+    then: (resolve: (v: unknown) => unknown) => Promise.resolve(rows).then(resolve),
+  };
+  Object.keys(chain).forEach((k) => {
+    if (typeof chain[k] === "function" && k !== "then") {
+      (chain[k] as ReturnType<typeof vi.fn>).mockReturnValue(chain);
+    }
+  });
+  return chain;
+}
 
 const originalEnv = { ...process.env };
 
@@ -40,6 +62,47 @@ describe("getClerkSessionAuthConfig", () => {
       authorizedParties: ["https://app.example.com", "https://example.com"],
       audience: "agentgraph-api",
     });
+  });
+});
+
+describe("resolveUserIdentity (strict identity isolation)", () => {
+  it("refuses to rebind an existing email to a new clerk_id (returns null, no writes)", async () => {
+    // byClerk lookup → none; byEmail lookup → a row owned by a different clerk_id.
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([]) as never)
+      .mockReturnValueOnce(makeChain([{ id: "user-owned-by-someone-else" }]) as never);
+
+    const result = await resolveUserIdentity("clerk_NEW", "reused@acme.com", "New Hire");
+
+    expect(result).toBeNull();
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("inserts a fresh row when neither clerk_id nor email exists", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([]) as never)
+      .mockReturnValueOnce(makeChain([]) as never);
+    vi.mocked(db.insert).mockReturnValue(makeChain([{ id: "user-new" }]) as never);
+
+    const result = await resolveUserIdentity("clerk_A", "alice@acme.com", "Alice");
+
+    expect(result).toBe("user-new");
+    expect(db.insert).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the same identity in sync when clerk_id already exists", async () => {
+    // byClerk and byEmail resolve to the same row.
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: "user-1" }]) as never)
+      .mockReturnValueOnce(makeChain([{ id: "user-1" }]) as never);
+    vi.mocked(db.update).mockReturnValue(makeChain([]) as never);
+
+    const result = await resolveUserIdentity("clerk_A", "alice@acme.com", "Alice A.");
+
+    expect(result).toBe("user-1");
+    expect(db.update).toHaveBeenCalledOnce();
+    expect(db.insert).not.toHaveBeenCalled();
   });
 });
 

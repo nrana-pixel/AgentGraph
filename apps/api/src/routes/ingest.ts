@@ -6,7 +6,7 @@ import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { db } from "../db/index.js";
 import { organizations, projects } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -64,13 +64,18 @@ router.post(
     // Push to Redis ingest queue — returns immediately
     await redis.lpush(INGEST_QUEUE_KEY, JSON.stringify(payload));
 
-    // Increment usage counter asynchronously
-    db.update(organizations)
-      .set({
-        tracesUsedThisMonth: org.tracesUsed + 1,
-      })
-      .where(eq(organizations.id, authed.orgId))
-      .catch(() => {});
+    // Atomic increment — a read-modify-write would lose counts under the
+    // concurrent ingests this endpoint is built for, letting callers slip
+    // past their plan quota. Failures are logged, not swallowed, but don't
+    // fail the request since the trace is already queued.
+    try {
+      await db
+        .update(organizations)
+        .set({ tracesUsedThisMonth: sql`${organizations.tracesUsedThisMonth} + 1` })
+        .where(eq(organizations.id, authed.orgId));
+    } catch (err) {
+      console.error("[ingest] failed to increment usage counter:", err);
+    }
 
     res.json({
       traceId,
