@@ -5,6 +5,7 @@ import postgres from "postgres";
 import { startIngestConsumer } from "./consumers/ingestConsumer.js";
 import { runStatsAggregator } from "./crons/statsAggregator.js";
 import { runSentimentFetcher } from "./crons/sentimentFetcher.js";
+import { runDailyDigest } from "./crons/dailyDigest.js";
 
 const databaseUrl = process.env["DATABASE_URL"];
 const redisUrl = process.env["REDIS_URL"];
@@ -28,6 +29,22 @@ function scheduleDailyCron(): void {
   setTimeout(() => {
     runStatsAggregator(db).catch(console.error);
     setInterval(() => runStatsAggregator(db).catch(console.error), 24 * 60 * 60 * 1000);
+  }, msUntilNext);
+}
+
+// Schedule daily digest webhook at 06:00 UTC
+function scheduleDailyDigestCron(): void {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(6, 0, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+
+  const msUntilNext = next.getTime() - now.getTime();
+  console.log(`[worker] daily digest scheduled in ${Math.round(msUntilNext / 60000)}m`);
+
+  setTimeout(() => {
+    runDailyDigest(db).catch(console.error);
+    setInterval(() => runDailyDigest(db).catch(console.error), 24 * 60 * 60 * 1000);
   }, msUntilNext);
 }
 
@@ -60,6 +77,7 @@ http.createServer((_, res) => {
 
 console.log("[worker] starting background workers");
 scheduleDailyCron();
+scheduleDailyDigestCron();
 scheduleWeeklyCron();
 
 // The ingest consumer runs indefinitely in the main loop

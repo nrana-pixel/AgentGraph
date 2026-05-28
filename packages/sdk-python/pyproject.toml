@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentgraph"
+version = "0.1.0"
+description = "AgentGraph SDK — OpenTelemetry-style tracing for AI agents (Python)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "AgentGraph" }]
+# Zero required third-party dependencies. The HTTP POST uses the standard
+# library `urllib.request`, mirroring the TypeScript SDK's "zero runtime deps".
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.24"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentgraph*"]

@@ -41,15 +41,22 @@ export const CreateApiKeySchema = z.object({
   name: z.string().min(1).max(100).optional(),
 });
 
-export const UpdateProjectSettingsSchema = z.object({
-  costSpikeThresholdUsd: z.number().positive().finite(),
-});
+export const UpdateProjectSettingsSchema = z
+  .object({
+    costSpikeThresholdUsd: z.number().positive().finite().optional(),
+    // null clears the cap ("no cap"); a positive number sets it.
+    monthlyCostCapUsd: z.number().positive().finite().nullable().optional(),
+  })
+  .refine((v) => v.costSpikeThresholdUsd !== undefined || v.monthlyCostCapUsd !== undefined, {
+    message: "At least one setting must be provided",
+  });
 export type UpdateProjectSettings = z.infer<typeof UpdateProjectSettingsSchema>;
 
 export const WebhookEventSchema = z.enum([
   "cost_spike",
   "error_rate_threshold",
   "trace_completed",
+  "daily_digest",
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEventSchema>;
 

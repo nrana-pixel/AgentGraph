@@ -425,18 +425,37 @@ router.patch(
       return;
     }
 
+    // Build the update from only the keys the caller supplied. null clears the
+    // cap; a number sets it. The schema guarantees at least one key is present.
+    const patch: { costSpikeThresholdUsd?: string; monthlyCostCapUsd?: string | null } = {};
+    if (parsed.data.costSpikeThresholdUsd !== undefined) {
+      patch.costSpikeThresholdUsd = parsed.data.costSpikeThresholdUsd.toFixed(2);
+    }
+    if (parsed.data.monthlyCostCapUsd !== undefined) {
+      patch.monthlyCostCapUsd =
+        parsed.data.monthlyCostCapUsd === null ? null : parsed.data.monthlyCostCapUsd.toFixed(2);
+    }
+
     const updated = await db
       .update(projects)
-      .set({ costSpikeThresholdUsd: parsed.data.costSpikeThresholdUsd.toFixed(2) })
+      .set(patch)
       .where(eq(projects.id, projectId))
-      .returning({ costSpikeThresholdUsd: projects.costSpikeThresholdUsd });
+      .returning({
+        costSpikeThresholdUsd: projects.costSpikeThresholdUsd,
+        monthlyCostCapUsd: projects.monthlyCostCapUsd,
+      });
 
     if (updated.length === 0) {
       res.status(404).json({ error: "project_not_found" });
       return;
     }
 
-    res.json({ costSpikeThresholdUsd: Number(updated[0]!.costSpikeThresholdUsd) });
+    res.json({
+      costSpikeThresholdUsd:
+        updated[0]!.costSpikeThresholdUsd !== null ? Number(updated[0]!.costSpikeThresholdUsd) : null,
+      monthlyCostCapUsd:
+        updated[0]!.monthlyCostCapUsd !== null ? Number(updated[0]!.monthlyCostCapUsd) : null,
+    });
   },
 );
 

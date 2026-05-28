@@ -5,8 +5,8 @@ import { redis, INGEST_QUEUE_KEY } from "../db/redis.js";
 import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { db } from "../db/index.js";
-import { organizations, projects } from "../db/schema.js";
-import { eq, sql } from "drizzle-orm";
+import { organizations, projects, traces } from "../db/schema.js";
+import { eq, and, gte, sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -28,6 +28,7 @@ router.post(
       .select({
         plan: organizations.plan,
         tracesUsed: organizations.tracesUsedThisMonth,
+        monthlyCostCapUsd: projects.monthlyCostCapUsd,
       })
       .from(projects)
       .innerJoin(organizations, eq(projects.orgId, organizations.id))
@@ -45,6 +46,32 @@ router.post(
         message: `Your ${org.plan} plan allows ${limit.toLocaleString()} traces/month. Upgrade to continue ingesting.`,
       });
       return;
+    }
+
+    // Hard monthly cost cap. Only runs when the project set a cap, so
+    // uncapped projects pay no extra query cost. This is approximate: cost is
+    // computed post-ingest in the worker, so the check is against the running
+    // committed total for the current month, not including in-flight traces.
+    const cap = org.monthlyCostCapUsd != null ? Number(org.monthlyCostCapUsd) : null;
+    if (cap != null && Number.isFinite(cap)) {
+      const startOfMonth = new Date();
+      startOfMonth.setUTCDate(1);
+      startOfMonth.setUTCHours(0, 0, 0, 0);
+
+      const [spend] = await db
+        .select({
+          total: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`,
+        })
+        .from(traces)
+        .where(and(eq(traces.projectId, authed.projectId), gte(traces.startedAt, startOfMonth)));
+
+      if (spend && spend.total >= cap) {
+        res.status(402).json({
+          error: "cost_cap_exceeded",
+          message: `This project has reached its monthly cost cap of $${cap.toFixed(2)}. Raise or remove the cap in Settings to continue ingesting.`,
+        });
+        return;
+      }
     }
 
     const parsed = IngestPayloadSchema.safeParse(req.body);

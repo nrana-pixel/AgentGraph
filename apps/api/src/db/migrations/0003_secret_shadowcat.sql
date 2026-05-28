@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "monthly_cost_cap_usd" numeric(10, 2);

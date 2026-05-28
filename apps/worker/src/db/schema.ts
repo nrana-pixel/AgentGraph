@@ -62,6 +62,12 @@ export const projects = pgTable("projects", {
     precision: 10,
     scale: 2,
   }).default("1.00"),
+  // null means "no hard cap"; when set, ingest rejects once the current
+  // month's running spend reaches this amount.
+  monthlyCostCapUsd: numeric("monthly_cost_cap_usd", {
+    precision: 10,
+    scale: 2,
+  }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

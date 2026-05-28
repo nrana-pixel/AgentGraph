@@ -22,6 +22,7 @@ vi.mock("../db/index.js", () => ({
 vi.mock("../db/schema.js", () => ({
   organizations: {},
   projects: {},
+  traces: {},
 }));
 
 vi.mock("../db/redis.js", () => ({
@@ -123,6 +124,34 @@ describe("POST /v1/ingest", () => {
     const res = await request(app).post("/v1/ingest").send(validPayload);
     expect(res.status).toBe(402);
     expect(res.body.error).toBe("trace_limit_exceeded");
+  });
+
+  it("returns 402 when the project's monthly cost cap is reached", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ plan: "pro", tracesUsed: 0, monthlyCostCapUsd: "50.00" }]))
+      .mockReturnValueOnce(makeChain([{ total: 50 }]));
+    const res = await request(app).post("/v1/ingest").send(validPayload);
+    expect(res.status).toBe(402);
+    expect(res.body.error).toBe("cost_cap_exceeded");
+  });
+
+  it("ingests normally when under the monthly cost cap", async () => {
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ plan: "pro", tracesUsed: 0, monthlyCostCapUsd: "50.00" }]))
+      .mockReturnValueOnce(makeChain([{ total: 10 }]));
+    const res = await request(app).post("/v1/ingest").send(validPayload);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("queued");
+  });
+
+  it("skips the cost-cap query when no cap is set", async () => {
+    vi.mocked(db.select).mockReturnValue(
+      makeChain([{ plan: "pro", tracesUsed: 0, monthlyCostCapUsd: null }]),
+    );
+    const res = await request(app).post("/v1/ingest").send(validPayload);
+    expect(res.status).toBe(200);
+    // Only the org/cap-fetch select runs; the spend aggregate is skipped.
+    expect(db.select).toHaveBeenCalledOnce();
   });
 
   it("returns 401 when the project is not found", async () => {

@@ -1,16 +1,13 @@
 import { drizzle } from "drizzle-orm/postgres-js";
-import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { Redis } from "ioredis";
-import { createHmac } from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { IngestPayloadSchema } from "@agentgraph/types";
+import type { Drizzle } from "../types.js";
 import { computeCost } from "../lib/modelCosts.js";
-import { assertPublicWebhookUrl } from "../lib/ssrfGuard.js";
-import { deliverWebhook } from "../lib/webhookDelivery.js";
-import { decryptSecret } from "../lib/secretCrypto.js";
-import { traces, traceSteps, tools, webhooks, projects } from "../db/schema.js";
+import { deliverSignedWebhooks } from "../lib/signedWebhookDelivery.js";
+import { traces, traceSteps, tools, projects } from "../db/schema.js";
 
 const QUEUE_KEY = "agentgraph:ingest:queue";
 const DEAD_LETTER_KEY = "agentgraph:ingest:dead";
@@ -207,23 +204,11 @@ export async function startIngestConsumer(
 const COST_SPIKE_THRESHOLD_USD = 1.00;
 
 async function fireCostSpikeWebhooks(
-  db: PostgresJsDatabase,
+  db: Drizzle,
   projectId: string,
   context: { traceId: string; agentId: string; costUsd: number; threshold: number },
 ): Promise<void> {
-  const targets = await db
-    .select({ url: webhooks.url, secret: webhooks.secret, events: webhooks.events })
-    .from(webhooks)
-    .where(
-      and(
-        eq(webhooks.projectId, projectId),
-        eq(webhooks.enabled, true),
-      ),
-    );
-
-  if (targets.length === 0) return;
-
-  const body = JSON.stringify({
+  await deliverSignedWebhooks(db, projectId, "cost_spike", {
     event: "cost_spike",
     projectId,
     traceId: context.traceId,
@@ -232,37 +217,6 @@ async function fireCostSpikeWebhooks(
     threshold: context.threshold,
     timestamp: new Date().toISOString(),
   });
-
-  const eligible = targets.filter((t) => t.events?.includes("cost_spike"));
-
-  const results = await Promise.allSettled(
-    eligible.map(async (target) => {
-      // SSRF guard: protocol + literal-IP fast check here; deliverWebhook
-      // additionally re-validates the resolved IP at connection time.
-      await assertPublicWebhookUrl(target.url);
-
-      const secret = decryptSecret(target.secret);
-      const sig = createHmac("sha256", secret).update(body).digest("hex");
-      const { status } = await deliverWebhook(
-        target.url,
-        {
-          "Content-Type": "application/json",
-          "X-AgentGraph-Signature": `sha256=${sig}`,
-        },
-        body,
-        5000,
-      );
-      if (status < 200 || status >= 300) {
-        console.warn(`[ingest-consumer] webhook ${target.url} returned ${status}`);
-      }
-    }),
-  );
-
-  for (const result of results) {
-    if (result.status === "rejected") {
-      console.error(`[ingest-consumer] webhook delivery failed:`, result.reason);
-    }
-  }
 }
 
 function toTitleCase(slug: string): string {
