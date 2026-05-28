@@ -103,9 +103,11 @@ npm run db:generate   # regenerate migration files from schema changes
 - **SDK clients** send `ag_*` API keys in `Authorization: Bearer ag_live_...`
 - **Dashboard** sends Clerk session JWTs in `Authorization: Bearer eyJ...`
 - `flexAuth` middleware in `apps/api/src/middleware/flexAuth.ts` dispatches based on the `ag_` prefix
-- `apiKeyAuth` (`apps/api/src/middleware/apiKeyAuth.ts`) — bcrypt compare with 60s in-memory cache
+- `apiKeyAuth` (`apps/api/src/middleware/apiKeyAuth.ts`) — narrows by indexed `key_prefix` (first 16 chars), then bcrypt-verifies the matching row; 60s bounded in-memory cache. New keys are bcrypt cost 12.
 - `clerkSessionAuth` (`apps/api/src/middleware/clerkSessionAuth.ts`) — `@clerk/backend` verifyToken
-- `CLERK_AUTHORIZED_PARTIES` env var controls allowed JWT issuers
+- `CLERK_AUTHORIZED_PARTIES` env var controls allowed JWT issuers; **boot hard-fails in production if it's unset** (azp must be validated)
+- **Identity isolation:** `resolveUserIdentity` (in `clerkSessionAuth.ts`) never rebinds an existing email to a new `clerk_id` — a reused corporate email cannot inherit another user's org/data. The Clerk webhook (`routes/auth.ts`) and on-demand backfill both go through it.
+- **Role gating:** minting/revoking API keys (`routes/projects.ts`) and webhook CRUD (`routes/webhooks.ts`) require an `owner`/`admin` org role over the dashboard; API-key auth is exempt (machine credential).
 
 ### Database — Drizzle ORM
 - Schema is the single source of truth: `apps/api/src/db/schema.ts`
@@ -115,9 +117,10 @@ npm run db:generate   # regenerate migration files from schema changes
 - Arrays (`dataResidency`, `tags`) are native Postgres `text[]` — use `ARRAY[...]::text[]` not `JSON.stringify`
 
 ### Ingest pipeline
-1. `POST /v1/ingest` validates payload, attaches `projectId` + `traceId`, pushes to Redis queue `agentgraph:ingest:queue`
+1. `POST /v1/ingest` validates payload, attaches `projectId` + `traceId`, pushes to Redis queue `agentgraph:ingest:queue`. Quota counter is incremented **atomically** (`SET col = col + 1`), not read-modify-write.
 2. Worker `BRPOP`s from that queue, runs a Postgres transaction: inserts trace + steps, auto-discovers tool slugs
 3. Cost computed from model pricing table in `apps/api/src/lib/modelCosts.ts` — longest-prefix sort matters
+4. Unprocessable payloads (bad JSON, schema fail, missing projectId, tx failure) are parked in the Redis dead-letter list `agentgraph:ingest:dead` (capped) instead of dropped silently — see `deadLetter()` in `ingestConsumer.ts`
 
 ### Tool Intelligence Graph
 - Seeded catalog: `apps/api/src/db/seed/tools.ts` (83 tools, 15 categories)
@@ -129,7 +132,7 @@ npm run db:generate   # regenerate migration files from schema changes
   - Results cached in Redis for 5 minutes (`RECOMMEND_CACHE_PREFIX`)
 
 ### Rate limiting
-Redis sliding-window, 1000 req/min per key. `apps/api/src/middleware/rateLimiter.ts`.
+Redis sliding-window, 1000 req/min per credential. `apps/api/src/middleware/rateLimiter.ts`. Bucket key is `sha256(full bearer token)` — a fixed-length prefix would collide across all Clerk JWTs (shared header).
 
 ### Shared types
 All Zod schemas live in `packages/types/src/`. Import from `@agentgraph/types`.
@@ -164,8 +167,9 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 
 Optional:
 ```
-CLERK_AUTHORIZED_PARTIES=https://app.agentgraph.dev   # prod JWT allowlist
+CLERK_AUTHORIZED_PARTIES=https://app.agentgraph.dev   # prod JWT allowlist (REQUIRED in prod — boot fails without it)
 CLERK_JWT_AUDIENCE=...                                 # if Clerk template emits aud
+WEBHOOK_ENCRYPTION_KEY=<64 hex chars>                  # AES-256-GCM for webhook secrets at rest; unset = plaintext (dev)
 GITHUB_TOKEN=ghp_...                                   # sentiment fetcher (5k req/hr)
 STRIPE_SECRET_KEY=sk_test_...                          # Phase 5: billing
 STRIPE_WEBHOOK_SECRET=whsec_...                        # Phase 5: Stripe webhook
@@ -191,9 +195,18 @@ STRIPE_WEBHOOK_SECRET=whsec_...                        # Phase 5: Stripe webhook
 - Recommendations: form + results UI (live API)
 - `@agentgraph/sdk`: `AgentGraph` client, `Trace`/`Span` classes, OpenAI + Anthropic auto-instrumentation, zero runtime deps
 - Billing enforcement: `POST /v1/ingest` checks plan limits → 402 when over quota
-- Cost spike webhooks: HMAC-SHA256 signed, fires when trace cost ≥ $1.00
+- Cost spike webhooks: HMAC-SHA256 signed, fires when trace cost ≥ $1.00; secrets AES-256-GCM encrypted at rest; SSRF-guarded delivery (private/loopback/link-local blocked at creation + connect time)
 - Onboarding: `OnboardingGate` + `GettingStartedCard` shown to new users
 - Vitest test suites: API routes, middleware, SDK span/trace, shared types
+
+### Security hardening (on `main`, commit 5b96c56)
+- Indexed API-key lookup (`idx_api_keys_key_prefix`, migration `0001`), bcrypt cost 12, bounded key cache
+- Strict identity isolation (no email→clerk_id rebinding); owner/admin role gating on key + webhook CRUD
+- Webhook SSRF guard (`lib/ssrfGuard.ts` in api + worker) + connect-time DNS-rebinding protection (`webhookDelivery.ts`)
+- AES-256-GCM webhook-secret encryption at rest (`lib/secretCrypto.ts`, `WEBHOOK_ENCRYPTION_KEY`)
+- Atomic ingest quota increment; rate-limit bucket = `sha256(token)`; ingest dead-letter queue
+- Prod boot fails without `CLERK_AUTHORIZED_PARTIES`
+- eslint flat config: test files lint without a build project; `no-explicit-any` relaxed for test doubles
 
 ### Phase 4 details
 

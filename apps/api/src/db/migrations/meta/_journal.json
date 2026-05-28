@@ -15,6 +15,13 @@
       "when": 1779986185797,
       "tag": "0001_famous_doctor_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779989104278,
+      "tag": "0002_cynical_steve_rogers",
+      "breakpoints": true
     }
   ]
 }

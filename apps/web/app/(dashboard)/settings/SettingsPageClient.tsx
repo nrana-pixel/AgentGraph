@@ -10,7 +10,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 
 type ApiKey = { id: string; name: string | null; keyPrefix: string; lastUsedAt: string | null; createdAt: string };
 type Webhook = { id: string; url: string; events: string[]; enabled: boolean; createdAt: string };
-type Billing = { plan: string; tracesUsed: number; tracesLimit: number; usagePct: number };
+type Billing = { plan: string; tracesUsed: number; tracesLimit: number; usagePct: number; costSpikeThresholdUsd: number | null };
 
 const PLAN_COLORS: Record<string, string> = { free: "info", pro: "violet", team: "ok" };
 const ALL_EVENTS = ["cost_spike", "error_rate_threshold", "trace_completed"];
@@ -24,6 +24,7 @@ export default function SettingsPageClient() {
   const [keyName, setKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [newWh, setNewWh] = useState({ url: "", events: ["cost_spike"] as string[] });
+  const [threshold, setThreshold] = useState("");
   const [fetching, setFetching] = useState(false);
   const toast = useToast();
 
@@ -35,7 +36,10 @@ export default function SettingsPageClient() {
       apiGet<Billing>(`/v1/projects/${project.id}/billing`, token),
       apiGet<{ webhooks: Webhook[] }>(`/v1/projects/${project.id}/webhooks`, token),
     ])
-      .then(([k, b, w]) => { setKeys(k.apiKeys); setBilling(b); setWebhooks(w.webhooks); })
+      .then(([k, b, w]) => {
+        setKeys(k.apiKeys); setBilling(b); setWebhooks(w.webhooks);
+        setThreshold(b.costSpikeThresholdUsd != null ? String(b.costSpikeThresholdUsd) : "1.00");
+      })
       .catch((err: Error) => toast(`Failed to load settings: ${err.message}`))
       .finally(() => setFetching(false));
   }, [project, token]);
@@ -62,6 +66,20 @@ export default function SettingsPageClient() {
   };
 
   const copyKey = (raw: string) => { navigator.clipboard?.writeText?.(raw); toast("Copied to clipboard"); };
+
+  const saveThreshold = async () => {
+    if (!project || !token) return;
+    const value = Number(threshold);
+    if (!Number.isFinite(value) || value <= 0) { toast("Enter a positive number"); return; }
+    try {
+      const data = await apiPatch<{ costSpikeThresholdUsd: number }>(
+        `/v1/projects/${project.id}/settings`, token, { costSpikeThresholdUsd: value },
+      );
+      setBilling(prev => prev ? { ...prev, costSpikeThresholdUsd: data.costSpikeThresholdUsd } : prev);
+      setThreshold(String(data.costSpikeThresholdUsd));
+      toast("Cost-spike threshold updated");
+    } catch { toast("Failed to update threshold"); }
+  };
 
   const addWebhook = async () => {
     if (!newWh.url.trim() || !newWh.url.startsWith("https://")) {
@@ -152,6 +170,22 @@ export default function SettingsPageClient() {
             <span className="muted-2">Name</span><span>{project.name}</span>
             <span className="muted-2">Project ID</span><span className="mono">{project.id}</span>
             <span className="muted-2">Created</span><span className="mono">{new Date(project.createdAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+      )}
+
+      {project && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="hd"><h3>Cost-spike alerts</h3><span className="sub mono">webhook threshold</span></div>
+          <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <span className="muted-2" style={{ fontSize: 12 }}>Fire a <span className="mono">cost_spike</span> webhook when a trace&apos;s cost reaches this amount (USD).</span>
+            <div className="row" style={{ gap: 8 }}>
+              <input className="input grow" type="number" min="0" step="0.01" placeholder="1.00"
+                     value={threshold} onChange={e => setThreshold(e.target.value)}
+                     onKeyDown={e => { if (e.key === "Enter") saveThreshold(); }}
+                     style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}/>
+              <button className="btn btn-primary" onClick={saveThreshold} disabled={!threshold.trim()}>Save</button>
+            </div>
           </div>
         </div>
       )}

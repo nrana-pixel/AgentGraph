@@ -6,7 +6,7 @@ import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
-import { CreateProjectSchema, CreateApiKeySchema } from "@agentgraph/types";
+import { CreateProjectSchema, CreateApiKeySchema, UpdateProjectSettingsSchema } from "@agentgraph/types";
 import bcrypt from "bcrypt";
 import { randomBytes } from "crypto";
 import { v4 as uuidv4 } from "uuid";
@@ -346,7 +346,7 @@ router.get(
     const PLAN_LIMITS: Record<string, number> = { free: 10_000, pro: 500_000, team: 5_000_000 };
 
     const [row] = await db
-      .select({ plan: organizations.plan, tracesUsed: organizations.tracesUsedThisMonth, stripeCustomerId: organizations.stripeCustomerId })
+      .select({ plan: organizations.plan, tracesUsed: organizations.tracesUsedThisMonth, stripeCustomerId: organizations.stripeCustomerId, costSpikeThresholdUsd: projects.costSpikeThresholdUsd })
       .from(projects)
       .innerJoin(organizations, eq(projects.orgId, organizations.id))
       .where(eq(projects.id, projectId));
@@ -363,6 +363,7 @@ router.get(
       tracesLimit: limit,
       usagePct: Math.min(1, row.tracesUsed / limit),
       hasPaymentMethod: Boolean(row.stripeCustomerId),
+      costSpikeThresholdUsd: row.costSpikeThresholdUsd !== null ? Number(row.costSpikeThresholdUsd) : null,
     });
   },
 );
@@ -394,6 +395,48 @@ router.get(
       .orderBy(desc(webhooks.createdAt));
 
     res.json({ webhooks: rows });
+  },
+);
+
+router.patch(
+  "/:id/settings",
+  rateLimiter,
+  flexAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params as { id: string };
+
+    let projectId: string;
+    if ((req as AuthedRequest).projectId) {
+      if ((req as AuthedRequest).projectId !== id) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      projectId = id;
+    } else {
+      const resolved = await resolveProjectFromClerk(req, res);
+      if (!resolved) return;
+      if (denyIfNotPrivileged(resolved.role, res)) return;
+      projectId = resolved.projectId;
+    }
+
+    const parsed = UpdateProjectSettingsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+
+    const updated = await db
+      .update(projects)
+      .set({ costSpikeThresholdUsd: parsed.data.costSpikeThresholdUsd.toFixed(2) })
+      .where(eq(projects.id, projectId))
+      .returning({ costSpikeThresholdUsd: projects.costSpikeThresholdUsd });
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: "project_not_found" });
+      return;
+    }
+
+    res.json({ costSpikeThresholdUsd: Number(updated[0]!.costSpikeThresholdUsd) });
   },
 );
 

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { Span } from "./span.js";
+import { applyRedaction } from "./redact.js";
+import type { TraceStepInput } from "@agentgraph/types";
+
+function step(overrides: Partial<TraceStepInput> = {}): TraceStepInput {
+  return { type: "tool_call", name: "s", timestamp: "2026-01-01T00:00:00.000Z", ...overrides };
+}
 
 describe("Span", () => {
   it("serialises type and name into the step input", () => {
@@ -80,5 +86,71 @@ describe("Span", () => {
     const span = new Span("llm_call", "chain-test");
     const result = span.setInput({}).setOutput({}).setModel("gpt-4o").setCost(0).end();
     expect(result).toBe(span);
+  });
+});
+
+describe("applyRedaction", () => {
+  it("returns the step unchanged when no options are set", () => {
+    const s = step({ input: { a: 1 } });
+    expect(applyRedaction(s, undefined)).toBe(s);
+    expect(applyRedaction(s, {})).toEqual(s);
+  });
+
+  it("redactKeys replaces matching keys in input and output (deep)", () => {
+    const s = step({
+      input: { apiKey: "secret", nested: { password: "p", keep: "ok" } },
+      output: { token: "t", list: [{ token: "x" }, { ok: 1 }] },
+    });
+    const out = applyRedaction(s, { redactKeys: ["apiKey", "password", "token"] });
+    expect(out.input).toEqual({
+      apiKey: "[REDACTED]",
+      nested: { password: "[REDACTED]", keep: "ok" },
+    });
+    expect(out.output).toEqual({
+      token: "[REDACTED]",
+      list: [{ token: "[REDACTED]" }, { ok: 1 }],
+    });
+  });
+
+  it("redactKeys does not mutate the original step", () => {
+    const s = step({ input: { apiKey: "secret" } });
+    applyRedaction(s, { redactKeys: ["apiKey"] });
+    expect(s.input).toEqual({ apiKey: "secret" });
+  });
+
+  it("hashInputs replaces input and output with a stable sha256 object", () => {
+    const s = step({ input: { q: "hi" }, output: { r: 42 } });
+    const out = applyRedaction(s, { hashInputs: true });
+    expect(out.input).toHaveProperty("_sha256");
+    expect(out.output).toHaveProperty("_sha256");
+    expect((out.input as { _sha256: string })._sha256).toMatch(/^[0-9a-f]{64}$/);
+    // stable: same content hashes identically
+    const again = applyRedaction(step({ input: { q: "hi" } }), { hashInputs: true });
+    expect((again.input as { _sha256: string })._sha256).toBe(
+      (out.input as { _sha256: string })._sha256,
+    );
+  });
+
+  it("redactKeys runs before hashInputs so secrets never enter the digest", () => {
+    const withRedact = applyRedaction(step({ input: { secret: "abc", keep: 1 } }), {
+      redactKeys: ["secret"],
+      hashInputs: true,
+    });
+    const redactedThenHashed = applyRedaction(
+      step({ input: { secret: "[REDACTED]", keep: 1 } }),
+      { hashInputs: true },
+    );
+    expect((withRedact.input as { _sha256: string })._sha256).toBe(
+      (redactedThenHashed.input as { _sha256: string })._sha256,
+    );
+  });
+
+  it("runs the redact hook last with full control", () => {
+    const out = applyRedaction(step({ input: { a: 1 } }), {
+      hashInputs: true,
+      redact: (st) => ({ ...st, name: "renamed" }),
+    });
+    expect(out.name).toBe("renamed");
+    expect(out.input).toHaveProperty("_sha256");
   });
 });

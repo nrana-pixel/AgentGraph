@@ -50,4 +50,36 @@ describe("computeCost", () => {
     // inputPer1M=0.075
     expect(computeCost("gemini-1.5-flash", 1_000_000, 0)).toBeCloseTo(0.075);
   });
+
+  it("computes Cohere command-r pricing correctly", () => {
+    // command-r: inputPer1M=0.5, outputPer1M=1.5
+    // 1M prompt + 1M completion → 0.5 + 1.5 = 2.0
+    expect(computeCost("command-r", 1_000_000, 1_000_000)).toBeCloseTo(2.0);
+  });
+
+  it("computes Cohere command-r-plus pricing correctly", () => {
+    // command-r-plus: inputPer1M=3.0, outputPer1M=15.0
+    expect(computeCost("command-r-plus", 1_000_000, 0)).toBeCloseTo(3.0);
+  });
+
+  it("does not let command-r shadow command-r-plus for versioned names", () => {
+    // "command-r-plus-08-2024" must resolve to command-r-plus (3.0/1M)
+    // not command-r (0.5/1M) — exercises the longest-prefix invariant.
+    expect(computeCost("command-r-plus-08-2024", 1_000_000, 0)).toBeCloseTo(3.0);
+  });
+
+  it("resolves versioned command-r to the base command-r price", () => {
+    // "command-r-08-2024" → command-r (0.5/1M)
+    expect(computeCost("command-r-08-2024", 1_000_000, 0)).toBeCloseTo(0.5);
+  });
+
+  it("picks gpt-4.1-mini prefix over gpt-4.1 for versioned names", () => {
+    // "gpt-4.1-mini-2025" must resolve to gpt-4.1-mini (0.4/1M) not gpt-4.1 (2.0/1M)
+    expect(computeCost("gpt-4.1-mini-2025", 1_000_000, 0)).toBeCloseTo(0.4);
+  });
+
+  it("computes claude-3-haiku pricing correctly", () => {
+    // claude-3-haiku-20240307: inputPer1M=0.25, outputPer1M=1.25
+    expect(computeCost("claude-3-haiku-20240307", 1_000_000, 1_000_000)).toBeCloseTo(1.5);
+  });
 });

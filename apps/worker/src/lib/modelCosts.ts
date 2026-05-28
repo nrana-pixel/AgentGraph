@@ -19,6 +19,9 @@ export const MODEL_COSTS: Record<string, ModelPricing> = {
   "o1-mini": { inputPer1M: 1.1, outputPer1M: 4.4 },
   "o3": { inputPer1M: 10.0, outputPer1M: 40.0 },
   "o3-mini": { inputPer1M: 1.1, outputPer1M: 4.4 },
+  "gpt-4.1": { inputPer1M: 2.0, outputPer1M: 8.0 },
+  "gpt-4.1-mini": { inputPer1M: 0.4, outputPer1M: 1.6 },
+  "gpt-4.1-nano": { inputPer1M: 0.1, outputPer1M: 0.4 },
 
   // Anthropic
   "claude-opus-4-7": { inputPer1M: 15.0, outputPer1M: 75.0 },
@@ -27,13 +30,16 @@ export const MODEL_COSTS: Record<string, ModelPricing> = {
   "claude-3-5-sonnet-20241022": { inputPer1M: 3.0, outputPer1M: 15.0 },
   "claude-3-5-haiku-20241022": { inputPer1M: 0.8, outputPer1M: 4.0 },
   "claude-3-opus-20240229": { inputPer1M: 15.0, outputPer1M: 75.0 },
+  "claude-3-haiku-20240307": { inputPer1M: 0.25, outputPer1M: 1.25 },
 
   // Google
   "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4 },
+  "gemini-2.0-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.3 },
   "gemini-1.5-pro": { inputPer1M: 1.25, outputPer1M: 5.0 },
   "gemini-1.5-flash": { inputPer1M: 0.075, outputPer1M: 0.3 },
 
   // Meta / open weights (hosted)
+  "llama-3.3-70b": { inputPer1M: 0.88, outputPer1M: 0.88 },
   "llama-3.1-405b": { inputPer1M: 3.0, outputPer1M: 3.0 },
   "llama-3.1-70b": { inputPer1M: 0.88, outputPer1M: 0.88 },
   "llama-3.1-8b": { inputPer1M: 0.18, outputPer1M: 0.18 },
@@ -41,6 +47,10 @@ export const MODEL_COSTS: Record<string, ModelPricing> = {
   // Mistral
   "mistral-large": { inputPer1M: 2.0, outputPer1M: 6.0 },
   "mistral-small": { inputPer1M: 0.2, outputPer1M: 0.6 },
+
+  // Cohere
+  "command-r-plus": { inputPer1M: 3.0, outputPer1M: 15.0 },
+  "command-r": { inputPer1M: 0.5, outputPer1M: 1.5 },
 };
 
 /**

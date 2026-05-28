@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "cost_spike_threshold_usd" numeric(10, 2) DEFAULT '1.00';

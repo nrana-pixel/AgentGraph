@@ -10,7 +10,7 @@ import { computeCost } from "../lib/modelCosts.js";
 import { assertPublicWebhookUrl } from "../lib/ssrfGuard.js";
 import { deliverWebhook } from "../lib/webhookDelivery.js";
 import { decryptSecret } from "../lib/secretCrypto.js";
-import { traces, traceSteps, tools, webhooks } from "../db/schema.js";
+import { traces, traceSteps, tools, webhooks, projects } from "../db/schema.js";
 
 const QUEUE_KEY = "agentgraph:ingest:queue";
 const DEAD_LETTER_KEY = "agentgraph:ingest:dead";
@@ -174,13 +174,27 @@ export async function startIngestConsumer(
             .onConflictDoNothing();
         }
       });
-      // ── 5. Fire cost-spike webhooks if threshold exceeded ────────────────
-      if (committedCostUsd !== null && committedCostUsd >= COST_SPIKE_THRESHOLD_USD) {
-        fireCostSpikeWebhooks(db, payload.projectId, {
-          traceId,
-          agentId: payload.agentId,
-          costUsd: committedCostUsd,
-        }).catch((e) => console.error("[ingest-consumer] webhook fire failed:", e));
+      // ── 5. Fire cost-spike webhooks if the project's threshold is exceeded ─
+      if (committedCostUsd !== null) {
+        const [project] = await db
+          .select({ threshold: projects.costSpikeThresholdUsd })
+          .from(projects)
+          .where(eq(projects.id, payload.projectId));
+
+        const parsedThreshold =
+          project?.threshold != null ? Number(project.threshold) : NaN;
+        const threshold = Number.isFinite(parsedThreshold)
+          ? parsedThreshold
+          : COST_SPIKE_THRESHOLD_USD;
+
+        if (committedCostUsd >= threshold) {
+          fireCostSpikeWebhooks(db, payload.projectId, {
+            traceId,
+            agentId: payload.agentId,
+            costUsd: committedCostUsd,
+            threshold,
+          }).catch((e) => console.error("[ingest-consumer] webhook fire failed:", e));
+        }
       }
     } catch (err) {
       console.error("[ingest-consumer] db transaction failed:", err);
@@ -189,12 +203,13 @@ export async function startIngestConsumer(
   }
 }
 
+// Fallback used when a project has no configured cost-spike threshold.
 const COST_SPIKE_THRESHOLD_USD = 1.00;
 
 async function fireCostSpikeWebhooks(
   db: PostgresJsDatabase,
   projectId: string,
-  context: { traceId: string; agentId: string; costUsd: number },
+  context: { traceId: string; agentId: string; costUsd: number; threshold: number },
 ): Promise<void> {
   const targets = await db
     .select({ url: webhooks.url, secret: webhooks.secret, events: webhooks.events })
@@ -214,7 +229,7 @@ async function fireCostSpikeWebhooks(
     traceId: context.traceId,
     agentId: context.agentId,
     costUsd: context.costUsd,
-    threshold: COST_SPIKE_THRESHOLD_USD,
+    threshold: context.threshold,
     timestamp: new Date().toISOString(),
   });
 

@@ -77,7 +77,7 @@ export default function LandingPage() {
               <span className="status-sep">·</span>
               <span><b>38ms</b> p50 ingest</span>
               <span className="status-sep">·</span>
-              <span><b>4.2M</b> spans / day</span>
+              <span><b>4.2M</b> traces / day</span>
               <span className="status-sep">·</span>
               <a className="link" href="#">self-host preview →</a>
             </div>
@@ -493,7 +493,7 @@ export default function LandingPage() {
               <div className="code-window">
                 <div className="code-tabs">
                   <button className="code-tab active" data-tab="ts">checkout-agent.ts</button>
-                  <button className="code-tab" data-tab="py">checkout_agent.py</button>
+                  <button className="code-tab" data-tab="py">checkout_agent.py <span className="mono muted">· soon</span></button>
                   <button className="code-tab" data-tab="curl">curl</button>
                   <div className="code-run">
                     <button id="run-example" className="run-btn">
@@ -659,7 +659,7 @@ export default function LandingPage() {
         <section className="pricing" id="pricing">
           <div className="pr-head">
             <div className="spot-tag mono">PRICING</div>
-            <h2>Pay for spans, not seats.</h2>
+            <h2>Pay for traces, not seats.</h2>
           </div>
           <div className="price-grid">
             <article className="price-card">
@@ -667,7 +667,7 @@ export default function LandingPage() {
               <div className="pc-amt"><span className="pc-num">$0</span><span className="pc-per">/mo</span></div>
               <div className="pc-sub muted">For prototypes and side projects.</div>
               <ul className="pc-feat">
-                <li><span className="ck">✓</span> 1M spans / month</li>
+                <li><span className="ck">✓</span> 10,000 traces / month</li>
                 <li><span className="ck">✓</span> 7-day retention</li>
                 <li><span className="ck">✓</span> All SDKs, OTLP export</li>
                 <li><span className="ck">✓</span> Community Discord</li>
@@ -676,8 +676,8 @@ export default function LandingPage() {
             </article>
             <article className="price-card hl">
               <div className="pc-name mono">SCALE</div>
-              <div className="pc-amt"><span className="pc-num">$0.10</span><span className="pc-per"> / 1K spans</span></div>
-              <div className="pc-sub muted">After the first 1M. Volume discounts at 50M.</div>
+              <div className="pc-amt"><span className="pc-num">$0.10</span><span className="pc-per"> / 1K traces</span></div>
+              <div className="pc-sub muted">After the first 10,000. Volume discounts at 50M.</div>
               <ul className="pc-feat">
                 <li><span className="ck">✓</span> Unlimited retention</li>
                 <li><span className="ck">✓</span> SSO &amp; SCIM</li>
@@ -742,8 +742,8 @@ export default function LandingPage() {
             <details>
               <summary>What happens if I exceed the free tier?</summary>
               <p>
-                Nothing breaks. We keep ingesting and email you. You opt in to billing before any charges. We won&apos;t
-                surprise-charge or hard-stop ingestion.
+                When you hit your plan&apos;s free trace limit, new ingests get a <code>402</code> response and we email you.
+                Opt in to billing to keep ingesting — we won&apos;t surprise-charge you before you do.
               </p>
             </details>
           </div>
@@ -794,7 +794,7 @@ export default function LandingPage() {
             <h2>
               Two minutes from <code className="cta-code">npm install</code> to a trace.
             </h2>
-            <p>Private beta. Free for the first 1M spans / month. No credit card.</p>
+            <p>Private beta. Free for the first 10,000 traces / month. No credit card.</p>
             <div className="cta-ctas">
               <a className="btn btn-primary btn-lg" href="#">Get an API key <span className="arr">→</span></a>
               <a className="btn-link btn-lg" href="#">Talk to an engineer →</a>
@@ -893,43 +893,63 @@ const TS_CODE = `<span class="c-kw">import</span> { AgentGraph } <span class="c-
 <span class="c-kw">const</span> <span class="c-var">ag</span> = <span class="c-kw">new</span> <span class="c-fn">AgentGraph</span>({ apiKey: process.env.<span class="c-var">AG_KEY</span> });
 
 <span class="c-kw">export async function</span> <span class="c-fn">checkout</span>(<span class="c-var">order</span>: <span class="c-dim">Order</span>) {
-  <span class="c-kw">return</span> ag.<span class="c-fn">trace</span>(<span class="c-str">"checkout-agent"</span>, <span class="c-kw">async</span> (t) =&gt; {
-    <span class="c-kw">const</span> ctx  = <span class="c-kw">await</span> t.<span class="c-fn">step</span>(<span class="c-str">"retrieve"</span>, () =&gt; <span class="c-fn">fetchContext</span>(order));
-    <span class="c-kw">const</span> plan = <span class="c-kw">await</span> t.<span class="c-fn">step</span>(<span class="c-str">"plan"</span>,     () =&gt; openai.<span class="c-fn">complete</span>(ctx));
-
-    <span class="c-co">// every tool call is auto-tagged with cost + latency</span>
-    <span class="c-kw">await</span> t.<span class="c-fn">tool</span>(<span class="c-str">"stripe.charge"</span>,   () =&gt; stripe.<span class="c-fn">charge</span>(order));
-    <span class="c-kw">await</span> t.<span class="c-fn">tool</span>(<span class="c-str">"postmark.send"</span>,  () =&gt; postmark.<span class="c-fn">send</span>(order));
-
-    <span class="c-kw">return</span> { ok: <span class="c-num">true</span>, plan };
+  <span class="c-kw">const</span> <span class="c-var">trace</span> = ag.<span class="c-fn">trace</span>({
+    agentId: <span class="c-str">"checkout-agent"</span>,
+    sessionId: order.<span class="c-var">sessionId</span>,
+    userId: order.<span class="c-var">userId</span>,
   });
+
+  <span class="c-co">// each step records latency + cost; pass a StepType + name</span>
+  <span class="c-kw">const</span> ctx = <span class="c-kw">await</span> trace.<span class="c-fn">step</span>(<span class="c-str">"retrieval"</span>, <span class="c-str">"fetch_context"</span>, <span class="c-kw">async</span> (span) =&gt; {
+    span.<span class="c-fn">setInput</span>({ orderId: order.<span class="c-var">id</span> });
+    <span class="c-kw">const</span> docs = <span class="c-kw">await</span> <span class="c-fn">fetchContext</span>(order);
+    span.<span class="c-fn">setOutput</span>({ docs });
+    <span class="c-kw">return</span> docs;
+  });
+
+  <span class="c-kw">const</span> plan = <span class="c-kw">await</span> trace.<span class="c-fn">step</span>(<span class="c-str">"llm_call"</span>, <span class="c-str">"plan"</span>, <span class="c-kw">async</span> (span) =&gt; {
+    span.<span class="c-fn">setModel</span>(<span class="c-str">"gpt-4o"</span>).<span class="c-fn">setInput</span>({ ctx });
+    <span class="c-kw">return</span> openai.<span class="c-fn">complete</span>(ctx);
+  });
+
+  <span class="c-kw">await</span> trace.<span class="c-fn">step</span>(<span class="c-str">"tool_call"</span>, <span class="c-str">"stripe.charge"</span>, () =&gt; stripe.<span class="c-fn">charge</span>(order));
+  <span class="c-kw">await</span> trace.<span class="c-fn">step</span>(<span class="c-str">"tool_call"</span>, <span class="c-str">"postmark.send"</span>, () =&gt; postmark.<span class="c-fn">send</span>(order));
+
+  <span class="c-kw">await</span> trace.<span class="c-fn">flush</span>(); <span class="c-co">// POST /v1/ingest</span>
+  <span class="c-kw">return</span> { ok: <span class="c-num">true</span>, plan };
 }`;
 
-const PY_CODE = `<span class="c-kw">from</span> agentgraph <span class="c-kw">import</span> AgentGraph
-<span class="c-kw">from</span> .tools <span class="c-kw">import</span> stripe, postmark, openai
+const PY_CODE = `<span class="c-co"># Python SDK — coming soon.</span>
+<span class="c-co">#</span>
+<span class="c-co"># We're building a native Python client with the same</span>
+<span class="c-co"># trace / step API as the TypeScript SDK.</span>
+<span class="c-co">#</span>
+<span class="c-co"># Until then, any Python service can ingest traces by</span>
+<span class="c-co"># POSTing to /v1/ingest directly — see the curl tab.</span>`;
 
-ag = <span class="c-fn">AgentGraph</span>(api_key=os.environ[<span class="c-str">"AG_KEY"</span>])
-
-<span class="c-kw">async def</span> <span class="c-fn">checkout</span>(order: Order):
-    <span class="c-kw">async with</span> ag.<span class="c-fn">trace</span>(<span class="c-str">"checkout-agent"</span>) <span class="c-kw">as</span> t:
-        ctx  = <span class="c-kw">await</span> t.<span class="c-fn">step</span>(<span class="c-str">"retrieve"</span>, <span class="c-kw">lambda</span>: fetch_context(order))
-        plan = <span class="c-kw">await</span> t.<span class="c-fn">step</span>(<span class="c-str">"plan"</span>,     <span class="c-kw">lambda</span>: openai.complete(ctx))
-
-        <span class="c-co"># every tool call is auto-tagged with cost + latency</span>
-        <span class="c-kw">await</span> t.<span class="c-fn">tool</span>(<span class="c-str">"stripe.charge"</span>,  <span class="c-kw">lambda</span>: stripe.charge(order))
-        <span class="c-kw">await</span> t.<span class="c-fn">tool</span>(<span class="c-str">"postmark.send"</span>, <span class="c-kw">lambda</span>: postmark.send(order))
-
-        <span class="c-kw">return</span> {<span class="c-str">"ok"</span>: <span class="c-num">True</span>, <span class="c-str">"plan"</span>: plan}`;
-
-const CURL_CODE = `<span class="c-co"># no SDK? POST spans directly.</span>
-curl -X POST https://agentgraph.dev/v1/spans \\
+const CURL_CODE = `<span class="c-co"># no SDK? POST a trace directly.</span>
+curl -X POST https://agentgraph.dev/v1/ingest \\
   -H <span class="c-str">"Authorization: Bearer $AG_KEY"</span> \\
   -H <span class="c-str">"Content-Type: application/json"</span> \\
   -d <span class="c-str">'{
-    "trace_id":  "t_4f8a",
-    "agent_id":  "checkout-agent",
-    "name":      "stripe.charge",
-    "kind":      "tool_call",
-    "duration_ms": 328,
-    "attributes": { "amount": 8240, "currency": "usd" }
+    "agentId": "checkout-agent",
+    "env": "prod",
+    "status": "completed",
+    "steps": [
+      {
+        "type": "llm_call",
+        "name": "plan",
+        "model": "gpt-4o",
+        "input": { "ctx": "..." },
+        "tokenUsage": { "prompt": 1820, "completion": 412, "total": 2232 }
+      },
+      {
+        "type": "tool_call",
+        "name": "stripe.charge",
+        "toolName": "stripe",
+        "latencyMs": 328,
+        "costUsd": 0.004,
+        "input": { "amount": 8240, "currency": "usd" }
+      }
+    ]
   }'</span>`;

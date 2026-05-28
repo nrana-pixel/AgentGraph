@@ -59,6 +59,10 @@ export const projects = pgTable("projects", {
     .notNull(),
   name: text("name").notNull(),
   slug: text("slug").unique().notNull(),
+  costSpikeThresholdUsd: numeric("cost_spike_threshold_usd", {
+    precision: 10,
+    scale: 2,
+  }).default("1.00"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

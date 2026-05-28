@@ -18,7 +18,8 @@ export class Trace {
 
   constructor(
     readonly options: TraceOptions,
-    private readonly send: (payload: IngestPayload) => Promise<void>
+    private readonly send: (payload: IngestPayload) => Promise<void>,
+    private readonly transformStep?: (step: TraceStepInput) => TraceStepInput
   ) {
     this.startedAt = Date.now();
   }
@@ -28,7 +29,8 @@ export class Trace {
   }
 
   addSpan(span: Span): void {
-    this.steps.push(span.toStepInput());
+    const step = span.toStepInput();
+    this.steps.push(this.transformStep ? this.transformStep(step) : step);
   }
 
   async step<T>(

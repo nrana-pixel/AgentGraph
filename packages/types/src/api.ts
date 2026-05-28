@@ -41,6 +41,11 @@ export const CreateApiKeySchema = z.object({
   name: z.string().min(1).max(100).optional(),
 });
 
+export const UpdateProjectSettingsSchema = z.object({
+  costSpikeThresholdUsd: z.number().positive().finite(),
+});
+export type UpdateProjectSettings = z.infer<typeof UpdateProjectSettingsSchema>;
+
 export const WebhookEventSchema = z.enum([
   "cost_spike",
   "error_rate_threshold",
