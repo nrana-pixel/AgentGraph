@@ -1,8 +1,16 @@
+import { createHash } from "node:crypto";
 import { sql, and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { tools, toolGlobalStats, toolUsageStats } from "../db/schema.js";
+import { redis } from "../db/redis.js";
 import { computeSchemaFit } from "./swapRecommendations.js";
-import { embedText, cosineSimilarity, parseStoredEmbedding } from "../lib/embeddings.js";
+import { toolBaseColumns, toolGlobalStatColumns, toolFtsMatch } from "./toolQueryShared.js";
+import {
+  embedText,
+  embeddingsEnabled,
+  cosineSimilarity,
+  parseStoredEmbedding,
+} from "../lib/embeddings.js";
 import type {
   DiscoverQuery,
   DiscoverResponse,
@@ -34,33 +42,18 @@ interface CandidateRow {
   embedding: string | null;
   totalCalls: number | null;
   successRate: string | null;
+  avgLatencyMs: string | null;
   p95LatencyMs: string | null;
   popularityScore: string | null;
   lastUpdated: Date | null;
 }
 
 const CANDIDATE_COLUMNS = {
-  slug: tools.slug,
-  name: tools.name,
-  description: tools.description,
-  category: tools.category,
-  website: tools.website,
-  docsUrl: tools.docsUrl,
-  isOpenSource: tools.isOpenSource,
-  isSelfHostable: tools.isSelfHostable,
-  pricingModel: tools.pricingModel,
-  dataResidency: tools.dataResidency,
-  tags: tools.tags,
-  dataSource: tools.dataSource,
-  sentimentScore: tools.sentimentScore,
+  ...toolBaseColumns,
   inputSchema: tools.inputSchema,
   outputSchema: tools.outputSchema,
   embedding: tools.embedding,
-  totalCalls: toolGlobalStats.totalCalls,
-  successRate: toolGlobalStats.successRate,
-  p95LatencyMs: toolGlobalStats.p95LatencyMs,
-  popularityScore: toolGlobalStats.popularityScore,
-  lastUpdated: toolGlobalStats.lastUpdated,
+  ...toolGlobalStatColumns,
 } as const;
 
 export async function discoverTools(
@@ -81,9 +74,7 @@ export async function discoverTools(
       inArray(tools.slug, availableTools.map((s) => s.toLowerCase().trim())),
     ]);
   } else {
-    const tsQuery = sql`plainto_tsquery('english', ${task})`;
-    const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(immutable_array_to_string(${tools.tags}, ' '), ''))`;
-    candidates = await runCandidateQuery([...conditions, sql`${tsVector} @@ ${tsQuery}`]);
+    candidates = await runCandidateQuery([...conditions, toolFtsMatch(task)]);
     // Fallback: no FTS hit → fall back to constraint-only top slice.
     if (candidates.length === 0) {
       candidates = await runCandidateQuery(conditions, 50);
@@ -96,7 +87,7 @@ export async function discoverTools(
 
   // ── 2. Gather scoring signals ──────────────────────────────────────────────
   const relevanceText = context ? `${task}\n\n${context}` : task;
-  const taskEmbedding = await embedText(relevanceText);
+  const taskEmbedding = await getTaskEmbedding(relevanceText);
   const orgHistory = opts.projectId
     ? await loadOrgHistory(opts.projectId, candidates.map((c) => c.slug))
     : new Map<string, number | null>();
@@ -244,6 +235,42 @@ const STOPWORDS = new Set([
 // ---------------------------------------------------------------------------
 // internals
 // ---------------------------------------------------------------------------
+
+const TASK_EMBEDDING_CACHE_PREFIX = "agentgraph:emb:";
+const TASK_EMBEDDING_TTL_S = 86_400; // 1 day — task text → vector is stable
+
+/**
+ * Embed the task text, caching the vector in Redis. The discover response cache
+ * is keyed by the full body (task + availableTools + limit + ...), so the same
+ * task asked with different toolsets would otherwise re-hit the embedding
+ * provider on every request. This caches the expensive part — the vector — so
+ * the per-request cost on the runtime hot path is a single Redis GET on a warm
+ * key, not an external API round-trip. Degrades to a direct embed on cache error.
+ */
+async function getTaskEmbedding(text: string): Promise<number[] | null> {
+  if (!embeddingsEnabled()) return null; // no provider → skip Redis entirely
+  const model = process.env["EMBEDDING_MODEL"] ?? "default";
+  const key =
+    TASK_EMBEDDING_CACHE_PREFIX +
+    createHash("sha256").update(`${model} ${text}`).digest("hex");
+
+  try {
+    const cached = await redis.get(key);
+    if (cached) return JSON.parse(cached) as number[];
+  } catch {
+    // cache read failure → fall through and embed directly
+  }
+
+  const vec = await embedText(text);
+  if (vec) {
+    try {
+      await redis.setex(key, TASK_EMBEDDING_TTL_S, JSON.stringify(vec));
+    } catch {
+      // best-effort cache write
+    }
+  }
+  return vec;
+}
 
 function computeTaskRelevance(
   c: CandidateRow,

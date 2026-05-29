@@ -1,6 +1,11 @@
 import { sql, and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { tools, toolGlobalStats } from "../db/schema.js";
+import {
+  toolBaseColumns,
+  toolGlobalStatColumns,
+  toolFtsMatch,
+} from "./toolQueryShared.js";
 import type { RecommendQuery, RecommendResponse, ToolRecommendation } from "@agentgraph/types";
 
 const COLD_START_THRESHOLD = 50;
@@ -50,40 +55,14 @@ export async function getRecommendations(
   }
 
   // Full-text search on name + description + tags
-  const tsQuery = sql`plainto_tsquery('english', ${task})`;
-  const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(immutable_array_to_string(${tools.tags}, ' '), ''))`;
+  const ftsMatch = toolFtsMatch(task);
 
   let candidates: ToolWithStats[] = normalizeToolStatsRows(
     await db
-      .select({
-        id: tools.id,
-        slug: tools.slug,
-        name: tools.name,
-        description: tools.description,
-        category: tools.category,
-        website: tools.website,
-        docsUrl: tools.docsUrl,
-        isOpenSource: tools.isOpenSource,
-        isSelfHostable: tools.isSelfHostable,
-        pricingModel: tools.pricingModel,
-        dataResidency: tools.dataResidency,
-        tags: tools.tags,
-        dataSource: tools.dataSource,
-        sentimentScore: tools.sentimentScore,
-        totalCalls: toolGlobalStats.totalCalls,
-        successRate: toolGlobalStats.successRate,
-        avgLatencyMs: toolGlobalStats.avgLatencyMs,
-        p95LatencyMs: toolGlobalStats.p95LatencyMs,
-        popularityScore: toolGlobalStats.popularityScore,
-        lastUpdated: toolGlobalStats.lastUpdated,
-      })
+      .select({ id: tools.id, ...toolBaseColumns, ...toolGlobalStatColumns })
       .from(tools)
       .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
-      .where(
-        conditions.length > 0
-          ? and(...conditions, sql`${tsVector} @@ ${tsQuery}`)
-          : sql`${tsVector} @@ ${tsQuery}`,
-      ),
+      .where(conditions.length > 0 ? and(...conditions, ftsMatch) : ftsMatch),
   );
 
   // Fallback: if no full-text match, use category or top by popularity
@@ -91,28 +70,7 @@ export async function getRecommendations(
     const fallbackConditions = conditions.length > 0 ? and(...conditions) : undefined;
     candidates = normalizeToolStatsRows(
       await db
-        .select({
-          id: tools.id,
-          slug: tools.slug,
-          name: tools.name,
-          description: tools.description,
-          category: tools.category,
-          website: tools.website,
-          docsUrl: tools.docsUrl,
-          isOpenSource: tools.isOpenSource,
-          isSelfHostable: tools.isSelfHostable,
-          pricingModel: tools.pricingModel,
-          dataResidency: tools.dataResidency,
-          tags: tools.tags,
-          dataSource: tools.dataSource,
-          sentimentScore: tools.sentimentScore,
-          totalCalls: toolGlobalStats.totalCalls,
-          successRate: toolGlobalStats.successRate,
-          avgLatencyMs: toolGlobalStats.avgLatencyMs,
-          p95LatencyMs: toolGlobalStats.p95LatencyMs,
-          popularityScore: toolGlobalStats.popularityScore,
-          lastUpdated: toolGlobalStats.lastUpdated,
-        })
+        .select({ id: tools.id, ...toolBaseColumns, ...toolGlobalStatColumns })
         .from(tools)
         .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
         .where(fallbackConditions)

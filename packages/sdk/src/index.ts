@@ -49,9 +49,25 @@ export class AgentGraph {
    * Ask which tool to use for a task, at runtime. Optionally restrict to the
    * tools this agent can actually call via `options.availableTools`. Returns
    * task-ranked tools with their input/output schemas.
+   *
+   * Retries transient failures (network / HTTP 5xx) with exponential backoff —
+   * but, unlike ingest, never queues: a discovery answer is only useful in the
+   * moment, so an exhausted call throws rather than being deferred. 4xx is
+   * surfaced immediately.
    */
-  discover(task: string, options: DiscoverOptions = {}): Promise<DiscoverResponse> {
-    return sendDiscover(this.config, task, options);
+  async discover(task: string, options: DiscoverOptions = {}): Promise<DiscoverResponse> {
+    const maxRetries = this.config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    const baseDelay = this.config.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await sendDiscover(this.config, task, options);
+      } catch (err) {
+        if (err instanceof IngestClientError) throw err; // 4xx — do not retry
+        if (attempt >= maxRetries) throw err;
+        await sleep(baseDelay * 2 ** (attempt - 1));
+      }
+    }
   }
 
   /**

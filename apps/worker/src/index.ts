@@ -8,6 +8,7 @@ import { runSentimentFetcher } from "./crons/sentimentFetcher.js";
 import { runDailyDigest } from "./crons/dailyDigest.js";
 import { runWarehouseExport } from "./crons/warehouseExport.js";
 import { runMcpCatalogSync } from "./crons/mcpCatalogSync.js";
+import { runEmbeddingBackfill } from "./crons/embeddingBackfill.js";
 
 const databaseUrl = process.env["DATABASE_URL"];
 const redisUrl = process.env["REDIS_URL"];
@@ -17,6 +18,22 @@ if (!redisUrl) throw new Error("REDIS_URL is required");
 
 const pgClient = postgres(databaseUrl);
 const db = drizzle(pgClient);
+
+// Schedule daily embedding backfill at 01:00 UTC (before stats aggregation)
+function scheduleEmbeddingBackfillCron(): void {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(1, 0, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+
+  const msUntilNext = next.getTime() - now.getTime();
+  console.log(`[worker] embedding backfill scheduled in ${Math.round(msUntilNext / 60000)}m`);
+
+  setTimeout(() => {
+    runEmbeddingBackfill(db).catch(console.error);
+    setInterval(() => runEmbeddingBackfill(db).catch(console.error), 24 * 60 * 60 * 1000);
+  }, msUntilNext);
+}
 
 // Schedule daily stats aggregator at 02:00 UTC
 function scheduleDailyCron(): void {
@@ -111,6 +128,7 @@ http.createServer((_, res) => {
 });
 
 console.log("[worker] starting background workers");
+scheduleEmbeddingBackfillCron();
 scheduleDailyCron();
 scheduleDailyDigestCron();
 scheduleWarehouseExportCron();

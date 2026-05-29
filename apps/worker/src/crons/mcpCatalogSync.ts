@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Drizzle } from "../types.js";
 import { tools } from "../db/schema.js";
-import { embedText, embeddingsEnabled } from "../lib/embeddings.js";
+import { embedTexts, embeddingsEnabled, toolEmbeddingText } from "../lib/embeddings.js";
 
 /**
  * Catalog sync — seeds/refreshes the tool catalog from the public MCP registry
@@ -171,13 +171,16 @@ export async function runMcpCatalogSync(db: Drizzle): Promise<void> {
   const normalized = normalizeRegistryEntries(raw);
   console.log(`[mcp-catalog-sync] normalized ${normalized.length} tools`);
 
-  const withEmbeddings = embeddingsEnabled();
+  // Embed all tools in batched provider calls up front (not one-at-a-time in
+  // the loop), then upsert with the precomputed vectors.
+  const embeddings = embeddingsEnabled()
+    ? await embedTexts(normalized.map((t) => toolEmbeddingText(t.name, t.description, t.tags)))
+    : [];
   let upserted = 0;
 
-  for (const t of normalized) {
-    const embedding = withEmbeddings
-      ? await embedText(`${t.name} ${t.description ?? ""} ${t.tags.join(" ")}`)
-      : null;
+  for (let i = 0; i < normalized.length; i++) {
+    const t = normalized[i]!;
+    const embedding = embeddings[i] ?? null;
 
     await db
       .insert(tools)

@@ -8,8 +8,12 @@ vi.mock("../db/schema.js", () => ({
   toolGlobalStats: {},
   toolUsageStats: {},
 }));
+vi.mock("../db/redis.js", () => ({
+  redis: { get: vi.fn(), setex: vi.fn() },
+}));
 vi.mock("../lib/embeddings.js", () => ({
   embedText: vi.fn().mockResolvedValue(null),
+  embeddingsEnabled: vi.fn().mockReturnValue(false),
   cosineSimilarity: vi.fn(),
   parseStoredEmbedding: vi.fn(),
 }));
