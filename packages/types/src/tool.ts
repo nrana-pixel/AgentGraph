@@ -65,6 +65,42 @@ export const ToolGlobalStatsSchema = z.object({
 });
 export type ToolGlobalStats = z.infer<typeof ToolGlobalStatsSchema>;
 
+export const GradeBandSchema = z.enum(["A", "B", "C", "D", "F"]);
+export type GradeBand = z.infer<typeof GradeBandSchema>;
+
+// Error-bucket counts surfaced by the reliability API (spec 01).
+export const ErrorTaxonomySchema = z.object({
+  timeout: z.number(),
+  auth: z.number(),
+  rate_limit: z.number(),
+  schema: z.number(),
+  "5xx": z.number(),
+  other: z.number(),
+});
+export type ErrorTaxonomy = z.infer<typeof ErrorTaxonomySchema>;
+
+// GET /v1/tools/:slug/reliability response (spec 01). reliabilityScore/gradeBand
+// are null below the min-k anonymity threshold (status = "insufficient_data").
+export const ToolReliabilityResponseSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  category: z.string(),
+  reliabilityScore: z.number().nullable(),
+  gradeBand: GradeBandSchema.nullable(),
+  successRate: z.number().nullable(),
+  p95LatencyMs: z.number().nullable(),
+  costPerCallUsd: z.number().nullable(),
+  errorTaxonomy: ErrorTaxonomySchema,
+  distinctOrgs: z.number(),
+  totalCalls: z.number(),
+  dataSource: z.string(),
+  status: z.enum(["ok", "insufficient_data"]),
+  lastUpdated: z.string().datetime().nullable(),
+});
+export type ToolReliabilityResponse = z.infer<
+  typeof ToolReliabilityResponseSchema
+>;
+
 export const RecommendQuerySchema = z.object({
   task: z.string().min(1).max(200),
   category: ToolCategorySchema.optional(),
@@ -177,6 +213,12 @@ export const DiscoveredToolSchema = z.object({
   docsUrl: z.string().nullable(),
   // True when this tool was in the caller's `availableTools` set.
   availableToCaller: z.boolean(),
+  // Tool-intrinsic reliability (spec 01) + description quality (spec 03) —
+  // surfaced so discovery can down-rank unreliable / poorly-described tools.
+  reliabilityScore: z.number().nullable().optional(),
+  gradeBand: GradeBandSchema.nullable().optional(),
+  descriptionQualityScore: z.number().nullable().optional(),
+  qualityIssues: z.array(z.string()).nullable().optional(),
 });
 export type DiscoveredTool = z.infer<typeof DiscoveredToolSchema>;
 
@@ -207,5 +249,9 @@ export const ToolListItemSchema = z.object({
   p95LatencyMs: z.number().nullable(),
   totalCalls: z.number().nullable(),
   popularityScore: z.string().nullable(),
+  reliabilityScore: z.string().nullable(),
+  gradeBand: GradeBandSchema.nullable(),
+  descriptionQualityScore: z.number().nullable(),
+  qualityIssues: z.array(z.string()).nullable(),
 });
 export type ToolListItem = z.infer<typeof ToolListItemSchema>;

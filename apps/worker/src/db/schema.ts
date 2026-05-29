@@ -182,6 +182,13 @@ export const tools = pgTable("tools", {
   outputSchema: text("output_schema"),
   // Semantic embedding (JSON float array) — populated by catalog sync.
   embedding: text("embedding"),
+  // sha256(name + description + JSON.stringify(inputSchema)) — contract fingerprint
+  // (rug-pull detection, spec 02; quality re-score trigger, spec 03).
+  definitionHash: text("definition_hash"),
+  // Description/schema quality score 0–100 (spec 03). null = not yet scored.
+  descriptionQualityScore: integer("description_quality_score"),
+  qualityIssues: text("quality_issues"), // JSON string[] of issue codes
+  qualityCheckedAt: timestamp("quality_checked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -225,8 +232,35 @@ export const toolGlobalStats = pgTable("tool_global_stats", {
   avgLatencyMs: numeric("avg_latency_ms", { precision: 10, scale: 2 }),
   p95LatencyMs: numeric("p95_latency_ms", { precision: 10, scale: 2 }),
   popularityScore: numeric("popularity_score", { precision: 5, scale: 2 }), // 0–100
+  // Reliability Score 0–100 (spec 01). null when distinctOrgs < K (min-k gate).
+  reliabilityScore: numeric("reliability_score", { precision: 5, scale: 2 }),
+  costPerCallUsd: numeric("cost_per_call_usd", { precision: 12, scale: 6 }),
+  // JSON: { timeout, auth, rate_limit, schema, "5xx", other }
+  errorTaxonomy: text("error_taxonomy"),
+  distinctOrgs: integer("distinct_orgs").default(0).notNull(),
+  gradeBand: text("grade_band"), // 'A'|'B'|'C'|'D'|'F'
   lastUpdated: timestamp("last_updated", { withTimezone: true }).defaultNow(),
 });
+
+// Daily snapshot of tool_global_stats — the time series the regression
+// "downdetector" (spec 02) diffs against to detect cross-network degradation.
+export const toolGlobalStatsHistory = pgTable(
+  "tool_global_stats_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    toolSlug: text("tool_slug").notNull(),
+    date: date("date").notNull(),
+    successRate: numeric("success_rate", { precision: 5, scale: 4 }),
+    p95LatencyMs: numeric("p95_latency_ms", { precision: 10, scale: 2 }),
+    costPerCallUsd: numeric("cost_per_call_usd", { precision: 12, scale: 6 }),
+    totalCalls: bigint("total_calls", { mode: "number" }),
+    distinctOrgs: integer("distinct_orgs").default(0).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_tool_global_stats_history_slug_date").on(t.toolSlug, t.date),
+    index("idx_tool_global_stats_history_slug_date").on(t.toolSlug, t.date),
+  ],
+);
 
 // Per-project rollup of how an agent ACTUALLY uses each tool (derived from
 // trace_steps.tool_name). Feeds trace-driven swap recommendations. toolSlug is
@@ -324,6 +358,9 @@ export type NewToolStat = typeof toolStats.$inferInsert;
 
 export type ToolGlobalStat = typeof toolGlobalStats.$inferSelect;
 export type NewToolGlobalStat = typeof toolGlobalStats.$inferInsert;
+
+export type ToolGlobalStatsHistory = typeof toolGlobalStatsHistory.$inferSelect;
+export type NewToolGlobalStatsHistory = typeof toolGlobalStatsHistory.$inferInsert;
 
 export type Webhook = typeof webhooks.$inferSelect;
 export type NewWebhook = typeof webhooks.$inferInsert;

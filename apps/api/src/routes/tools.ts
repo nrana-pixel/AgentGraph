@@ -5,13 +5,45 @@ import { tools, toolGlobalStats } from "../db/schema.js";
 import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth } from "../middleware/clerkSessionAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
-import { RecommendQuerySchema, PaginationSchema } from "@agentgraph/types";
+import {
+  RecommendQuerySchema,
+  PaginationSchema,
+  type ToolReliabilityResponse,
+} from "@agentgraph/types";
 import { getRecommendations } from "../services/recommendationEngine.js";
 import { redis, RECOMMEND_CACHE_PREFIX } from "../db/redis.js";
 
 const router = Router();
 
 const RECOMMEND_CACHE_TTL_S = 300; // 5 minutes
+
+const EMPTY_ERROR_TAXONOMY = {
+  timeout: 0,
+  auth: 0,
+  rate_limit: 0,
+  schema: 0,
+  "5xx": 0,
+  other: 0,
+};
+
+function parseQualityIssues(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeJson(raw: string): Record<string, number> {
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Flexible auth for dashboard + SDK reads.
@@ -98,6 +130,10 @@ router.get(
         p95LatencyMs: toolGlobalStats.p95LatencyMs,
         totalCalls: toolGlobalStats.totalCalls,
         popularityScore: toolGlobalStats.popularityScore,
+        reliabilityScore: toolGlobalStats.reliabilityScore,
+        gradeBand: toolGlobalStats.gradeBand,
+        descriptionQualityScore: tools.descriptionQualityScore,
+        qualityIssues: tools.qualityIssues,
       })
       .from(tools)
       .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
@@ -109,9 +145,77 @@ router.get(
 
     const rows = await query.limit(limit).offset((page - 1) * limit);
 
+    // qualityIssues is stored as a JSON string; surface it as a parsed array
+    // to match the ToolListItem contract.
+    const toolsOut = rows.map((r) => ({
+      ...r,
+      qualityIssues: parseQualityIssues(r.qualityIssues),
+    }));
+
     // Return project scope only for API key auth
     const projectId = (req as AuthedRequest).projectId ?? null;
-    res.json({ tools: rows, page, limit, projectId });
+    res.json({ tools: toolsOut, page, limit, projectId });
+  },
+);
+
+// GET /v1/tools/:slug/reliability — public Reliability Score (spec 01)
+router.get(
+  "/:slug/reliability",
+  rateLimiter,
+  flexAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const { slug } = req.params as { slug: string };
+
+    const [tool] = await db
+      .select({
+        slug: tools.slug,
+        name: tools.name,
+        category: tools.category,
+        dataSource: tools.dataSource,
+      })
+      .from(tools)
+      .where(eq(tools.slug, slug));
+
+    if (!tool) {
+      res.status(404).json({ error: "tool_not_found" });
+      return;
+    }
+
+    const [stats] = await db
+      .select()
+      .from(toolGlobalStats)
+      .where(eq(toolGlobalStats.toolSlug, slug));
+
+    const distinctOrgs = stats?.distinctOrgs ?? 0;
+    // Min-k anonymity: a score is only published once it survives the
+    // aggregator's gate (>= K distinct orgs) AND a stats row exists.
+    const hasScore = !!stats && stats.reliabilityScore !== null;
+
+    const errorTaxonomy = stats?.errorTaxonomy
+      ? { ...EMPTY_ERROR_TAXONOMY, ...safeJson(stats.errorTaxonomy) }
+      : EMPTY_ERROR_TAXONOMY;
+
+    const response: ToolReliabilityResponse = {
+      slug: tool.slug,
+      name: tool.name,
+      category: tool.category,
+      reliabilityScore: hasScore ? Number(stats.reliabilityScore) : null,
+      gradeBand: hasScore
+        ? (stats.gradeBand as ToolReliabilityResponse["gradeBand"])
+        : null,
+      successRate: stats?.successRate != null ? Number(stats.successRate) : null,
+      p95LatencyMs: stats?.p95LatencyMs != null ? Number(stats.p95LatencyMs) : null,
+      costPerCallUsd:
+        stats?.costPerCallUsd != null ? Number(stats.costPerCallUsd) : null,
+      errorTaxonomy,
+      distinctOrgs,
+      totalCalls: stats?.totalCalls ?? 0,
+      dataSource: tool.dataSource,
+      status: hasScore ? "ok" : "insufficient_data",
+      lastUpdated: stats?.lastUpdated ? stats.lastUpdated.toISOString() : null,
+    };
+
+    res.json(response);
   },
 );
 
