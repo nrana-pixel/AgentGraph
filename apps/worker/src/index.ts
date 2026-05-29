@@ -6,6 +6,7 @@ import { startIngestConsumer } from "./consumers/ingestConsumer.js";
 import { runStatsAggregator } from "./crons/statsAggregator.js";
 import { runSentimentFetcher } from "./crons/sentimentFetcher.js";
 import { runDailyDigest } from "./crons/dailyDigest.js";
+import { runWarehouseExport } from "./crons/warehouseExport.js";
 
 const databaseUrl = process.env["DATABASE_URL"];
 const redisUrl = process.env["REDIS_URL"];
@@ -48,6 +49,22 @@ function scheduleDailyDigestCron(): void {
   }, msUntilNext);
 }
 
+// Schedule warehouse/object-store export at 03:00 UTC
+function scheduleWarehouseExportCron(): void {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(3, 0, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+
+  const msUntilNext = next.getTime() - now.getTime();
+  console.log(`[worker] warehouse export scheduled in ${Math.round(msUntilNext / 60000)}m`);
+
+  setTimeout(() => {
+    runWarehouseExport(db).catch(console.error);
+    setInterval(() => runWarehouseExport(db).catch(console.error), 24 * 60 * 60 * 1000);
+  }, msUntilNext);
+}
+
 // Schedule weekly sentiment fetcher on Sunday at 04:00 UTC
 function scheduleWeeklyCron(): void {
   const now = new Date();
@@ -78,6 +95,7 @@ http.createServer((_, res) => {
 console.log("[worker] starting background workers");
 scheduleDailyCron();
 scheduleDailyDigestCron();
+scheduleWarehouseExportCron();
 scheduleWeeklyCron();
 
 // The ingest consumer runs indefinitely in the main loop

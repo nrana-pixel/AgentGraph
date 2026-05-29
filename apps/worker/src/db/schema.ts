@@ -174,6 +174,10 @@ export const tools = pgTable("tools", {
   tags: text("tags").array(),
   dataSource: text("data_source").default("seeded").notNull(), // 'seeded' | 'telemetry' | 'community'
   sentimentScore: numeric("sentiment_score", { precision: 5, scale: 2 }),
+  // JSON-schema strings describing the tool's input/output contract — used by
+  // the swap-recommendation engine for "schema fit" scoring. Null = unknown.
+  inputSchema: text("input_schema"),
+  outputSchema: text("output_schema"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -220,6 +224,31 @@ export const toolGlobalStats = pgTable("tool_global_stats", {
   lastUpdated: timestamp("last_updated", { withTimezone: true }).defaultNow(),
 });
 
+// Per-project rollup of how an agent ACTUALLY uses each tool (derived from
+// trace_steps.tool_name). Feeds trace-driven swap recommendations. toolSlug is
+// not FK'd — observed tool names may not be in the catalog.
+export const toolUsageStats = pgTable(
+  "tool_usage_stats",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .references(() => projects.id, { onDelete: "cascade" })
+      .notNull(),
+    toolSlug: text("tool_slug").notNull(),
+    calls: integer("calls").default(0).notNull(),
+    errorCount: integer("error_count").default(0).notNull(),
+    avgLatencyMs: numeric("avg_latency_ms", { precision: 10, scale: 2 }),
+    p50LatencyMs: numeric("p50_latency_ms", { precision: 10, scale: 2 }),
+    p95LatencyMs: numeric("p95_latency_ms", { precision: 10, scale: 2 }),
+    totalCostUsd: numeric("total_cost_usd", { precision: 12, scale: 6 }),
+    lastComputedAt: timestamp("last_computed_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_tool_usage_stats_project_tool").on(t.projectId, t.toolSlug),
+    index("idx_tool_usage_stats_project").on(t.projectId),
+  ],
+);
+
 // ---------------------------------------------------------------------------
 // Webhooks
 // ---------------------------------------------------------------------------
@@ -235,6 +264,31 @@ export const webhooks = pgTable("webhooks", {
   enabled: boolean("enabled").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Warehouse / object-store export
+// ---------------------------------------------------------------------------
+
+// Per-project destination for scheduled trace export. `config` holds NON-secret
+// routing only (bucket, region, prefix, dataset, table); credentials come from
+// the worker's environment, never the DB. highWaterMark is the export cursor.
+export const projectExportConfigs = pgTable(
+  "project_export_configs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .references(() => projects.id, { onDelete: "cascade" })
+      .notNull(),
+    destination: text("destination").notNull(), // 's3' | 'gcs' | 'bigquery' | 'snowflake'
+    config: text("config").default("{}").notNull(), // JSON string, non-secret routing
+    format: text("format").default("ndjson").notNull(), // 'ndjson' | 'parquet'
+    enabled: boolean("enabled").default(false).notNull(),
+    highWaterMark: timestamp("high_water_mark", { withTimezone: true }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("idx_project_export_configs_project").on(t.projectId)],
+);
 
 // ---------------------------------------------------------------------------
 // Type exports for use in services
@@ -269,3 +323,9 @@ export type NewToolGlobalStat = typeof toolGlobalStats.$inferInsert;
 
 export type Webhook = typeof webhooks.$inferSelect;
 export type NewWebhook = typeof webhooks.$inferInsert;
+
+export type ToolUsageStat = typeof toolUsageStats.$inferSelect;
+export type NewToolUsageStat = typeof toolUsageStats.$inferInsert;
+
+export type ProjectExportConfig = typeof projectExportConfigs.$inferSelect;
+export type NewProjectExportConfig = typeof projectExportConfigs.$inferInsert;

@@ -10,6 +10,7 @@ import { useTweaks } from "@/lib/tweaks";
 import { useProject } from "@/hooks/useProject";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
+import TraceSwapInsights from "./TraceSwapInsights";
 
 type Rec = ToolRecommendation & { isCold: boolean };
 
@@ -341,6 +342,8 @@ export default function RecommendationsPage() {
           </div>
         </div>
       )}
+
+      <TraceSwapInsights />
     </div>
   );
 }
