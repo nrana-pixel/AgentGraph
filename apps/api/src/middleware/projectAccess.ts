@@ -5,31 +5,23 @@ import { projects, organizations, orgMembers, users } from "../db/schema.js";
 import { type AuthedRequest } from "./apiKeyAuth.js";
 import { type ClerkAuthedRequest } from "./clerkSessionAuth.js";
 
-// Sensitive mutations (minting/revoking API keys, managing webhooks, export
-// configs) are restricted to org owners/admins. API-key auth is a machine
-// credential already scoped to the project and admin-issued, so it is exempt.
 const PRIVILEGED_ROLES = new Set(["owner", "admin"]);
 
 interface ProjectAccessOptions {
-  // When set, Clerk callers must hold an owner/admin role; the message is sent
-  // verbatim in the 403 body so each route keeps its own wording.
+  // When set, Clerk callers must be owner/admin; sent verbatim in the 403 body.
   requirePrivilegedMessage?: string;
 }
 
-// Authorise the caller for `projectId` under the dual auth pattern and return
-// the project id on success. On failure it sends the 403 and returns null, so
-// callers bail with `if (!resolved) return;`.
-//
-//   - API-key auth: the key is already bound to a project; only the matching
-//     project id is allowed (mismatch → 403 forbidden).
-//   - Clerk session: the caller must be a member of the project's org (miss →
-//     403 forbidden), and an owner/admin when a privileged message is supplied.
+// Returns the project id when the caller may access it, else sends a 403 and
+// returns null (callers bail with `if (!resolved) return;`).
 export async function resolveProjectAccess(
   req: Request,
   res: Response,
   projectId: string,
   options: ProjectAccessOptions = {},
 ): Promise<string | null> {
+  // API-key auth is a project-scoped machine credential — exempt from the role
+  // gate; only its own project is allowed.
   if ((req as AuthedRequest).projectId) {
     if ((req as AuthedRequest).projectId !== projectId) {
       res.status(403).json({ error: "forbidden" });
