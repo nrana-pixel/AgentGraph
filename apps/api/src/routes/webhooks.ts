@@ -2,53 +2,19 @@ import { Router, type Request, type Response } from "express";
 import { randomBytes } from "crypto";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { webhooks, projects, organizations, orgMembers, users } from "../db/schema.js";
-import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
-import { type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
+import { webhooks } from "../db/schema.js";
 import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
+import { resolveProjectAccess } from "../middleware/projectAccess.js";
 import { assertPublicWebhookUrl } from "../lib/ssrfGuard.js";
 import { encryptSecret } from "../lib/secretCrypto.js";
 import { CreateWebhookSchema } from "@agentgraph/types";
 
 const router = Router();
 
-interface ResolvedProject {
-  projectId: string;
-  role: string;
-}
-
-async function resolveProjectFromClerk(req: Request, res: Response): Promise<ResolvedProject | null> {
-  const authed = req as ClerkAuthedRequest;
-  const { projectId } = req.params as { projectId: string };
-
-  const [row] = await db
-    .select({ projectId: projects.id, role: orgMembers.role })
-    .from(projects)
-    .innerJoin(organizations, eq(projects.orgId, organizations.id))
-    .innerJoin(orgMembers, eq(organizations.id, orgMembers.orgId))
-    .innerJoin(users, eq(orgMembers.userId, users.id))
-    .where(and(eq(projects.id, projectId), eq(users.clerkId, authed.clerkUserId)));
-
-  if (!row) {
-    res.status(403).json({ error: "forbidden" });
-    return null;
-  }
-  return { projectId: row.projectId, role: row.role };
-}
-
 // Webhook management is owner/admin-only over the dashboard. API-key auth is a
 // machine credential scoped to the project and is exempt.
-const PRIVILEGED_ROLES = new Set(["owner", "admin"]);
-
-function denyIfNotPrivileged(role: string, res: Response): boolean {
-  if (PRIVILEGED_ROLES.has(role)) return false;
-  res.status(403).json({
-    error: "insufficient_role",
-    message: "Only organization owners or admins can manage webhooks.",
-  });
-  return true;
-}
+const MANAGE_WEBHOOKS_DENY = "Only organization owners or admins can manage webhooks.";
 
 router.post(
   "/:projectId/webhooks",
@@ -57,19 +23,10 @@ router.post(
   async (req: Request, res: Response): Promise<void> => {
     const { projectId } = req.params as { projectId: string };
 
-    let resolvedProjectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== projectId) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      resolvedProjectId = projectId;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      resolvedProjectId = resolved.projectId;
-    }
+    const resolvedProjectId = await resolveProjectAccess(req, res, projectId, {
+      requirePrivilegedMessage: MANAGE_WEBHOOKS_DENY,
+    });
+    if (!resolvedProjectId) return;
 
     const parsed = CreateWebhookSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -118,19 +75,10 @@ router.patch(
   async (req: Request, res: Response): Promise<void> => {
     const { projectId, webhookId } = req.params as { projectId: string; webhookId: string };
 
-    let resolvedProjectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== projectId) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      resolvedProjectId = projectId;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      resolvedProjectId = resolved.projectId;
-    }
+    const resolvedProjectId = await resolveProjectAccess(req, res, projectId, {
+      requirePrivilegedMessage: MANAGE_WEBHOOKS_DENY,
+    });
+    if (!resolvedProjectId) return;
 
     const { enabled } = req.body as { enabled?: boolean };
     if (typeof enabled !== "boolean") {
@@ -160,19 +108,10 @@ router.delete(
   async (req: Request, res: Response): Promise<void> => {
     const { projectId, webhookId } = req.params as { projectId: string; webhookId: string };
 
-    let resolvedProjectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== projectId) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      resolvedProjectId = projectId;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      resolvedProjectId = resolved.projectId;
-    }
+    const resolvedProjectId = await resolveProjectAccess(req, res, projectId, {
+      requirePrivilegedMessage: MANAGE_WEBHOOKS_DENY,
+    });
+    if (!resolvedProjectId) return;
 
     const deleted = await db
       .delete(webhooks)

@@ -2,10 +2,10 @@ import { Router, type Request, type Response } from "express";
 import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { traces, traceSteps, projects, organizations, apiKeys, webhooks, orgMembers, users } from "../db/schema.js";
-import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
+import { resolveProjectAccess } from "../middleware/projectAccess.js";
 import { CreateProjectSchema, CreateApiKeySchema, UpdateProjectSettingsSchema, UpdateOtlpConfigSchema } from "@agentgraph/types";
 import bcrypt from "bcrypt";
 import { randomBytes } from "crypto";
@@ -13,43 +13,10 @@ import { v4 as uuidv4 } from "uuid";
 
 const router = Router();
 
-interface ResolvedProject {
-  projectId: string;
-  role: string;
-}
-
-async function resolveProjectFromClerk(req: Request, res: Response): Promise<ResolvedProject | null> {
-  const authed = req as ClerkAuthedRequest;
-  const { id } = req.params as { id: string };
-
-  const [row] = await db
-    .select({ projectId: projects.id, role: orgMembers.role })
-    .from(projects)
-    .innerJoin(organizations, eq(projects.orgId, organizations.id))
-    .innerJoin(orgMembers, eq(organizations.id, orgMembers.orgId))
-    .innerJoin(users, eq(orgMembers.userId, users.id))
-    .where(and(eq(projects.id, id), eq(users.clerkId, authed.clerkUserId)));
-
-  if (!row) {
-    res.status(403).json({ error: "forbidden" });
-    return null;
-  }
-  return { projectId: row.projectId, role: row.role };
-}
-
-// Sensitive mutations (minting/revoking API keys, managing webhooks) are
-// restricted to org owners/admins. API-key auth is a machine credential that
-// is already project-scoped and admin-issued, so it is exempt.
-const PRIVILEGED_ROLES = new Set(["owner", "admin"]);
-
-function denyIfNotPrivileged(role: string, res: Response): boolean {
-  if (PRIVILEGED_ROLES.has(role)) return false;
-  res.status(403).json({
-    error: "insufficient_role",
-    message: "Only organization owners or admins can perform this action.",
-  });
-  return true;
-}
+// Minting/revoking API keys and changing project settings are restricted to
+// org owners/admins. API-key auth is a machine credential that is already
+// project-scoped and admin-issued, so it is exempt.
+const MANAGE_PROJECT_DENY = "Only organization owners or admins can perform this action.";
 
 router.get(
   "/",
@@ -115,20 +82,8 @@ router.get(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id);
+    if (!projectId) return;
 
     const fromParam = req.query["from"] as string | undefined;
     const toParam = req.query["to"] as string | undefined;
@@ -209,20 +164,8 @@ router.get(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id);
+    if (!projectId) return;
 
     const rows = await db
       .select({
@@ -246,21 +189,10 @@ router.post(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id, {
+      requirePrivilegedMessage: MANAGE_PROJECT_DENY,
+    });
+    if (!projectId) return;
 
     const parsed = CreateApiKeySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -294,19 +226,10 @@ router.delete(
   async (req: Request, res: Response): Promise<void> => {
     const { id, keyId } = req.params as { id: string; keyId: string };
 
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, id, {
+      requirePrivilegedMessage: MANAGE_PROJECT_DENY,
+    });
+    if (!projectId) return;
 
     const updated = await db
       .update(apiKeys)
@@ -328,20 +251,8 @@ router.get(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id);
+    if (!projectId) return;
 
     const PLAN_LIMITS: Record<string, number> = { free: 10_000, pro: 500_000, team: 5_000_000 };
 
@@ -373,20 +284,8 @@ router.get(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id);
+    if (!projectId) return;
 
     const rows = await db
       .select({ id: webhooks.id, url: webhooks.url, events: webhooks.events, enabled: webhooks.enabled, createdAt: webhooks.createdAt })
@@ -403,21 +302,10 @@ router.patch(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id, {
+      requirePrivilegedMessage: MANAGE_PROJECT_DENY,
+    });
+    if (!projectId) return;
 
     const parsed = UpdateProjectSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -468,21 +356,10 @@ router.patch(
   rateLimiter,
   flexAuth,
   async (req: Request, res: Response): Promise<void> => {
-    const { id } = req.params as { id: string };
-
-    let projectId: string;
-    if ((req as AuthedRequest).projectId) {
-      if ((req as AuthedRequest).projectId !== id) {
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      projectId = id;
-    } else {
-      const resolved = await resolveProjectFromClerk(req, res);
-      if (!resolved) return;
-      if (denyIfNotPrivileged(resolved.role, res)) return;
-      projectId = resolved.projectId;
-    }
+    const projectId = await resolveProjectAccess(req, res, (req.params as { id: string }).id, {
+      requirePrivilegedMessage: MANAGE_PROJECT_DENY,
+    });
+    if (!projectId) return;
 
     const parsed = UpdateOtlpConfigSchema.safeParse(req.body);
     if (!parsed.success) {
