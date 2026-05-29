@@ -68,6 +68,11 @@ export const projects = pgTable("projects", {
     precision: 10,
     scale: 2,
   }),
+  // OTLP trace export — pipe persisted traces to a customer's collector
+  // (Datadog/Honeycomb/own collector). Export runs out-of-band in the worker.
+  otlpEndpoint: text("otlp_endpoint"), // full OTLP/HTTP traces endpoint, e.g. https://api.honeycomb.io/v1/traces
+  otlpHeaders: text("otlp_headers"), // JSON string of { header: value } (e.g. auth tokens)
+  otlpEnabled: boolean("otlp_enabled").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -124,6 +129,9 @@ export const traceSteps = pgTable(
       .references(() => traces.id, { onDelete: "cascade" })
       .notNull(),
     stepIndex: integer("step_index").notNull(),
+    // Parent step for span nesting. Currently always null (spans are flat);
+    // present to enable future nested traces and OTLP parent-span linkage.
+    parentStepId: uuid("parent_step_id"),
     type: text("type").notNull(), // 'llm_call' | 'tool_call' | 'retrieval' | 'human' | 'custom'
     name: text("name").notNull(),
     input: text("input"), // JSONB stored as text

@@ -52,6 +52,27 @@ export const UpdateProjectSettingsSchema = z
   });
 export type UpdateProjectSettings = z.infer<typeof UpdateProjectSettingsSchema>;
 
+// OTLP trace export config for a project. When enabled, the worker replays
+// persisted traces to `otlpEndpoint` (a full OTLP/HTTP traces endpoint, e.g.
+// https://api.honeycomb.io/v1/traces). `otlpHeaders` carries auth (e.g.
+// { "x-honeycomb-team": "<key>" }). null clears the respective field.
+export const UpdateOtlpConfigSchema = z
+  .object({
+    otlpEnabled: z.boolean(),
+    otlpEndpoint: z.string().url().nullable(),
+    otlpHeaders: z.record(z.string(), z.string()).nullable(),
+  })
+  .refine(
+    (v) =>
+      !v.otlpEnabled ||
+      (v.otlpEndpoint !== null && new URL(v.otlpEndpoint).protocol === "https:"),
+    {
+      message: "A valid https OTLP endpoint is required when export is enabled",
+      path: ["otlpEndpoint"],
+    },
+  );
+export type UpdateOtlpConfig = z.infer<typeof UpdateOtlpConfigSchema>;
+
 export const WebhookEventSchema = z.enum([
   "cost_spike",
   "error_rate_threshold",

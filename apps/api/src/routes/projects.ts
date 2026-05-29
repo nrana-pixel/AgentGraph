@@ -6,7 +6,7 @@ import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
-import { CreateProjectSchema, CreateApiKeySchema, UpdateProjectSettingsSchema } from "@agentgraph/types";
+import { CreateProjectSchema, CreateApiKeySchema, UpdateProjectSettingsSchema, UpdateOtlpConfigSchema } from "@agentgraph/types";
 import bcrypt from "bcrypt";
 import { randomBytes } from "crypto";
 import { v4 as uuidv4 } from "uuid";
@@ -455,6 +455,65 @@ router.patch(
         updated[0]!.costSpikeThresholdUsd !== null ? Number(updated[0]!.costSpikeThresholdUsd) : null,
       monthlyCostCapUsd:
         updated[0]!.monthlyCostCapUsd !== null ? Number(updated[0]!.monthlyCostCapUsd) : null,
+    });
+  },
+);
+
+// Configure per-project OTLP trace export (Datadog/Honeycomb/own collector).
+// Owner/admin gated for Clerk callers; project-scoped API keys are exempt.
+// The endpoint must be a valid https URL when export is enabled; headers (auth
+// tokens etc.) are stored as a JSON string. Setting headers to null clears them.
+router.patch(
+  "/:id/integrations/otlp",
+  rateLimiter,
+  flexAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params as { id: string };
+
+    let projectId: string;
+    if ((req as AuthedRequest).projectId) {
+      if ((req as AuthedRequest).projectId !== id) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      projectId = id;
+    } else {
+      const resolved = await resolveProjectFromClerk(req, res);
+      if (!resolved) return;
+      if (denyIfNotPrivileged(resolved.role, res)) return;
+      projectId = resolved.projectId;
+    }
+
+    const parsed = UpdateOtlpConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+
+    const updated = await db
+      .update(projects)
+      .set({
+        otlpEnabled: parsed.data.otlpEnabled,
+        otlpEndpoint: parsed.data.otlpEndpoint,
+        otlpHeaders:
+          parsed.data.otlpHeaders === null ? null : JSON.stringify(parsed.data.otlpHeaders),
+      })
+      .where(eq(projects.id, projectId))
+      .returning({
+        otlpEnabled: projects.otlpEnabled,
+        otlpEndpoint: projects.otlpEndpoint,
+        otlpHeaders: projects.otlpHeaders,
+      });
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: "project_not_found" });
+      return;
+    }
+
+    res.json({
+      otlpEnabled: updated[0]!.otlpEnabled,
+      otlpEndpoint: updated[0]!.otlpEndpoint,
+      otlpHeaders: updated[0]!.otlpHeaders ? JSON.parse(updated[0]!.otlpHeaders) : null,
     });
   },
 );

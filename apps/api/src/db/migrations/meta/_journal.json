@@ -29,6 +29,13 @@
       "when": 1779989830348,
       "tag": "0003_secret_shadowcat",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779990527302,
+      "tag": "0004_gifted_la_nuit",
+      "breakpoints": true
     }
   ]
 }

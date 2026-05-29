@@ -7,7 +7,9 @@ import { IngestPayloadSchema } from "@agentgraph/types";
 import type { Drizzle } from "../types.js";
 import { computeCost } from "../lib/modelCosts.js";
 import { deliverSignedWebhooks } from "../lib/signedWebhookDelivery.js";
+import { exportTraceToOtlp } from "../lib/otlpExport.js";
 import { traces, traceSteps, tools, projects } from "../db/schema.js";
+import type { TraceStep } from "../db/schema.js";
 
 const QUEUE_KEY = "agentgraph:ingest:queue";
 const DEAD_LETTER_KEY = "agentgraph:ingest:dead";
@@ -76,6 +78,9 @@ export async function startIngestConsumer(
 
     const traceId = payload.traceId ?? uuidv4();
     let committedCostUsd: number | null = null;
+    // Captured inside the transaction so the post-commit OTLP export can replay
+    // the same persisted rows without a second DB read.
+    let committedSteps: TraceStep[] = [];
 
     try {
       await db.transaction(async (tx) => {
@@ -106,6 +111,7 @@ export async function startIngestConsumer(
             id: step.stepId ?? uuidv4(),
             traceId,
             stepIndex: idx,
+            parentStepId: null,
             type: step.type,
             name: step.name,
             input: step.input ? JSON.stringify(step.input) : null,
@@ -120,8 +126,9 @@ export async function startIngestConsumer(
             toolName: step.toolName ?? null,
             toolVersion: step.toolVersion ?? null,
             timestamp: step.timestamp ? new Date(step.timestamp) : new Date(),
-          };
+          } satisfies TraceStep;
         });
+        committedSteps = enrichedSteps;
 
         const finalCostUsd =
           payload.totalCostUsd ?? (totalComputedCostUsd > 0 ? totalComputedCostUsd : null);
@@ -171,13 +178,21 @@ export async function startIngestConsumer(
             .onConflictDoNothing();
         }
       });
-      // ── 5. Fire cost-spike webhooks if the project's threshold is exceeded ─
-      if (committedCostUsd !== null) {
-        const [project] = await db
-          .select({ threshold: projects.costSpikeThresholdUsd })
-          .from(projects)
-          .where(eq(projects.id, payload.projectId));
+      // ── 5. Post-commit side effects: cost-spike webhooks + OTLP export ────
+      // Single project read serves both — the threshold check and the
+      // per-project OTLP export config. Both fire-and-forget so neither blocks
+      // the ingest loop.
+      const [project] = await db
+        .select({
+          threshold: projects.costSpikeThresholdUsd,
+          otlpEnabled: projects.otlpEnabled,
+          otlpEndpoint: projects.otlpEndpoint,
+          otlpHeaders: projects.otlpHeaders,
+        })
+        .from(projects)
+        .where(eq(projects.id, payload.projectId));
 
+      if (committedCostUsd !== null) {
         const parsedThreshold =
           project?.threshold != null ? Number(project.threshold) : NaN;
         const threshold = Number.isFinite(parsedThreshold)
@@ -192,6 +207,18 @@ export async function startIngestConsumer(
             threshold,
           }).catch((e) => console.error("[ingest-consumer] webhook fire failed:", e));
         }
+      }
+
+      if (project?.otlpEnabled && project.otlpEndpoint) {
+        exportTraceToOtlp(
+          {
+            otlpEnabled: project.otlpEnabled,
+            otlpEndpoint: project.otlpEndpoint,
+            otlpHeaders: project.otlpHeaders,
+          },
+          { id: traceId },
+          committedSteps,
+        ).catch((e) => console.error("[ingest-consumer] otlp export failed:", e));
       }
     } catch (err) {
       console.error("[ingest-consumer] db transaction failed:", err);

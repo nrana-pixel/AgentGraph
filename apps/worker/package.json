@@ -9,10 +9,17 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "pretypecheck": "npm run build --workspace=@agentgraph/types",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@agentgraph/types": "*",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/sdk-trace-base": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0",
     "dotenv": "^16.4.0",
     "drizzle-orm": "^0.36.0",
     "ioredis": "^5.4.0",
@@ -22,6 +29,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
   }
 }
