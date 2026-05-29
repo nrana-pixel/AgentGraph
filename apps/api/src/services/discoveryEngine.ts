@@ -1,0 +1,370 @@
+import { sql, and, eq, inArray } from "drizzle-orm";
+import { db } from "../db/index.js";
+import { tools, toolGlobalStats, toolUsageStats } from "../db/schema.js";
+import { computeSchemaFit } from "./swapRecommendations.js";
+import { embedText, cosineSimilarity, parseStoredEmbedding } from "../lib/embeddings.js";
+import type {
+  DiscoverQuery,
+  DiscoverResponse,
+  DiscoveredTool,
+} from "@agentgraph/types";
+
+const COLD_START_THRESHOLD = 50;
+const COLD_START_SCORE_CAP = 70;
+// An org needs at least this many of its own calls before its private history
+// is trusted as a ranking signal (below this it's noise).
+const ORG_HISTORY_MIN_CALLS = 5;
+
+interface CandidateRow {
+  slug: string;
+  name: string;
+  description: string | null;
+  category: string;
+  website: string | null;
+  docsUrl: string | null;
+  isOpenSource: boolean;
+  isSelfHostable: boolean;
+  pricingModel: string | null;
+  dataResidency: string[] | null;
+  tags: string[] | null;
+  dataSource: string;
+  sentimentScore: string | null;
+  inputSchema: string | null;
+  outputSchema: string | null;
+  embedding: string | null;
+  totalCalls: number | null;
+  successRate: string | null;
+  p95LatencyMs: string | null;
+  popularityScore: string | null;
+  lastUpdated: Date | null;
+}
+
+const CANDIDATE_COLUMNS = {
+  slug: tools.slug,
+  name: tools.name,
+  description: tools.description,
+  category: tools.category,
+  website: tools.website,
+  docsUrl: tools.docsUrl,
+  isOpenSource: tools.isOpenSource,
+  isSelfHostable: tools.isSelfHostable,
+  pricingModel: tools.pricingModel,
+  dataResidency: tools.dataResidency,
+  tags: tools.tags,
+  dataSource: tools.dataSource,
+  sentimentScore: tools.sentimentScore,
+  inputSchema: tools.inputSchema,
+  outputSchema: tools.outputSchema,
+  embedding: tools.embedding,
+  totalCalls: toolGlobalStats.totalCalls,
+  successRate: toolGlobalStats.successRate,
+  p95LatencyMs: toolGlobalStats.p95LatencyMs,
+  popularityScore: toolGlobalStats.popularityScore,
+  lastUpdated: toolGlobalStats.lastUpdated,
+} as const;
+
+export async function discoverTools(
+  query: DiscoverQuery,
+  opts: { projectId?: string } = {},
+): Promise<DiscoverResponse> {
+  const { task, availableTools, context, currentInputSchema, limit } = query;
+
+  // ── 1. Retrieve candidates ────────────────────────────────────────────────
+  const conditions = buildConstraints(query);
+
+  let candidates: CandidateRow[];
+  if (availableTools && availableTools.length > 0) {
+    // Rank WITHIN the agent's toolset — no text pre-filter, we score everything
+    // the agent can call so even a weak text match still gets ranked.
+    candidates = await runCandidateQuery([
+      ...conditions,
+      inArray(tools.slug, availableTools.map((s) => s.toLowerCase().trim())),
+    ]);
+  } else {
+    const tsQuery = sql`plainto_tsquery('english', ${task})`;
+    const tsVector = sql`to_tsvector('english', coalesce(${tools.name}, '') || ' ' || coalesce(${tools.description}, '') || ' ' || coalesce(immutable_array_to_string(${tools.tags}, ' '), ''))`;
+    candidates = await runCandidateQuery([...conditions, sql`${tsVector} @@ ${tsQuery}`]);
+    // Fallback: no FTS hit → fall back to constraint-only top slice.
+    if (candidates.length === 0) {
+      candidates = await runCandidateQuery(conditions, 50);
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { task, tools: [], dataFreshness: new Date().toISOString() };
+  }
+
+  // ── 2. Gather scoring signals ──────────────────────────────────────────────
+  const relevanceText = context ? `${task}\n\n${context}` : task;
+  const taskEmbedding = await embedText(relevanceText);
+  const orgHistory = opts.projectId
+    ? await loadOrgHistory(opts.projectId, candidates.map((c) => c.slug))
+    : new Map<string, number | null>();
+
+  const p95Values = candidates
+    .filter((c) => c.p95LatencyMs !== null)
+    .map((c) => parseFloat(c.p95LatencyMs!));
+  const p95Median = median(p95Values) || 1000;
+
+  // ── 3. Score ────────────────────────────────────────────────────────────────
+  const scored = candidates.map((c) => {
+    const isColdStart = (c.totalCalls ?? 0) < COLD_START_THRESHOLD;
+
+    const taskRelevance = computeTaskRelevance(c, taskEmbedding, relevanceText);
+    const reliability = c.successRate !== null ? parseFloat(c.successRate) * 100 : 80;
+    const latency = computeLatencyScore(c.p95LatencyMs, p95Median);
+
+    const fit =
+      currentInputSchema && c.inputSchema
+        ? computeSchemaFit(currentInputSchema, c.inputSchema)
+        : null;
+    const schemaFit = fit !== null ? fit * 100 : null;
+
+    const orgHist = orgHistory.get(c.slug) ?? null;
+
+    const score = computeDiscoveryScore({
+      taskRelevance,
+      reliability,
+      latency,
+      schemaFit,
+      orgHistory: orgHist,
+      isColdStart,
+    });
+
+    return { c, score, isColdStart, scores: { taskRelevance, schemaFit, reliability, orgHistory: orgHist, latency } };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, limit);
+
+  const dataFreshness =
+    top
+      .map((s) => s.c.lastUpdated)
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => b.getTime() - a.getTime())[0]
+      ?.toISOString() ?? new Date().toISOString();
+
+  const available = new Set((availableTools ?? []).map((s) => s.toLowerCase().trim()));
+
+  const result: DiscoveredTool[] = top.map(({ c, score, isColdStart, scores }) => ({
+    slug: c.slug,
+    name: c.name,
+    category: c.category as DiscoveredTool["category"],
+    score: round1(score),
+    scores: {
+      taskRelevance: round1(scores.taskRelevance),
+      schemaFit: scores.schemaFit !== null ? round1(scores.schemaFit) : null,
+      reliability: round1(scores.reliability),
+      orgHistory: scores.orgHistory !== null ? round1(scores.orgHistory) : null,
+      latency: round1(scores.latency),
+    },
+    reason: generateReason(c, scores, isColdStart),
+    inputSchema: c.inputSchema,
+    outputSchema: c.outputSchema,
+    successRate: c.successRate !== null ? parseFloat(c.successRate) : null,
+    p95LatencyMs: c.p95LatencyMs !== null ? parseFloat(c.p95LatencyMs) : null,
+    popularityScore: c.popularityScore !== null ? parseFloat(c.popularityScore) : null,
+    sentimentScore: c.sentimentScore !== null ? parseFloat(c.sentimentScore) : null,
+    isOpenSource: c.isOpenSource,
+    isSelfHostable: c.isSelfHostable,
+    pricingModel: c.pricingModel as DiscoveredTool["pricingModel"],
+    dataResidency: (c.dataResidency ?? []) as DiscoveredTool["dataResidency"],
+    dataSource: (isColdStart ? "seeded" : c.dataSource) as DiscoveredTool["dataSource"],
+    website: c.website,
+    docsUrl: c.docsUrl,
+    availableToCaller: available.has(c.slug),
+  }));
+
+  return { task, tools: result, dataFreshness };
+}
+
+// ---------------------------------------------------------------------------
+// Pure scoring helpers (unit-tested without a DB)
+// ---------------------------------------------------------------------------
+
+export interface DiscoveryScoreInput {
+  taskRelevance: number; // 0–100
+  reliability: number; // 0–100
+  latency: number; // 0–100
+  schemaFit: number | null; // 0–100 or null (unknown)
+  orgHistory: number | null; // 0–100 or null (no trusted history)
+  isColdStart: boolean;
+}
+
+/**
+ * Blend the components into a 0–100 score. Weights:
+ *   taskRelevance 35% · reliability 25% · schemaFit 15% · orgHistory 15% · latency 10%
+ * Optional components (schemaFit, orgHistory) are dropped when null and their
+ * weight is redistributed proportionally — an absent signal is neutral, never a
+ * penalty. Cold-start tools are capped so thin data can't top a proven tool.
+ */
+export function computeDiscoveryScore(i: DiscoveryScoreInput): number {
+  const parts: Array<{ v: number; w: number }> = [
+    { v: i.taskRelevance, w: 0.35 },
+    { v: i.reliability, w: 0.25 },
+    { v: i.latency, w: 0.1 },
+  ];
+  if (i.schemaFit !== null) parts.push({ v: i.schemaFit, w: 0.15 });
+  if (i.orgHistory !== null) parts.push({ v: i.orgHistory, w: 0.15 });
+
+  const totalW = parts.reduce((s, p) => s + p.w, 0);
+  const raw = parts.reduce((s, p) => s + p.v * p.w, 0) / totalW;
+  return i.isColdStart ? Math.min(raw, COLD_START_SCORE_CAP) : raw;
+}
+
+/**
+ * Keyword-overlap relevance, 0–100. Fraction of task terms found in the tool's
+ * text, floored at 20 so a non-match in a constrained toolset still ranks on its
+ * other merits rather than collapsing to zero. Used when semantic embeddings
+ * are unavailable.
+ */
+export function keywordRelevance(task: string, text: string): number {
+  const taskTokens = tokenize(task);
+  if (taskTokens.size === 0) return 50;
+  const textTokens = tokenize(text);
+  let hits = 0;
+  for (const t of taskTokens) if (textTokens.has(t)) hits++;
+  return clamp(20 + (hits / taskTokens.size) * 80, 0, 100);
+}
+
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3 && !STOPWORDS.has(t)),
+  );
+}
+
+const STOPWORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "into", "your", "you",
+  "are", "can", "use", "using", "tool", "tools", "best", "via", "how", "what",
+]);
+
+// ---------------------------------------------------------------------------
+// internals
+// ---------------------------------------------------------------------------
+
+function computeTaskRelevance(
+  c: CandidateRow,
+  taskEmbedding: number[] | null,
+  relevanceText: string,
+): number {
+  if (taskEmbedding) {
+    const toolEmbedding = parseStoredEmbedding(c.embedding);
+    if (toolEmbedding && toolEmbedding.length === taskEmbedding.length) {
+      // cosine ∈ [-1,1] → [0,100]
+      return clamp(((cosineSimilarity(taskEmbedding, toolEmbedding) + 1) / 2) * 100, 0, 100);
+    }
+  }
+  const text = `${c.name} ${c.description ?? ""} ${(c.tags ?? []).join(" ")}`;
+  return keywordRelevance(relevanceText, text);
+}
+
+function computeLatencyScore(p95Raw: string | null, p95Median: number): number {
+  const p95 = p95Raw !== null ? parseFloat(p95Raw) : p95Median;
+  return clamp(100 - (p95 / p95Median) * 50, 0, 100);
+}
+
+async function loadOrgHistory(
+  projectId: string,
+  slugs: string[],
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  if (slugs.length === 0) return out;
+  const rows = await db
+    .select({
+      toolSlug: toolUsageStats.toolSlug,
+      calls: toolUsageStats.calls,
+      errorCount: toolUsageStats.errorCount,
+    })
+    .from(toolUsageStats)
+    .where(
+      and(eq(toolUsageStats.projectId, projectId), inArray(toolUsageStats.toolSlug, slugs)),
+    );
+  for (const r of rows) {
+    if (r.calls < ORG_HISTORY_MIN_CALLS) continue;
+    out.set(r.toolSlug, clamp((1 - r.errorCount / r.calls) * 100, 0, 100));
+  }
+  return out;
+}
+
+function buildConstraints(query: DiscoverQuery) {
+  const conditions = [];
+  if (query.category) conditions.push(eq(tools.category, query.category));
+  if (query.selfHosted) conditions.push(eq(tools.isSelfHostable, true));
+  if (query.openSource) conditions.push(eq(tools.isOpenSource, true));
+  if (query.maxCost) conditions.push(eq(tools.pricingModel, query.maxCost));
+  if (query.dataResidency) {
+    conditions.push(sql`${tools.dataResidency} @> ARRAY[${query.dataResidency}]::text[]`);
+  }
+  return conditions;
+}
+
+async function runCandidateQuery(
+  conditions: ReturnType<typeof buildConstraints> | unknown[],
+  limit?: number,
+): Promise<CandidateRow[]> {
+  const where =
+    conditions.length === 0
+      ? undefined
+      : conditions.length === 1
+        ? (conditions[0] as ReturnType<typeof and>)
+        : and(...(conditions as Parameters<typeof and>));
+
+  const base = db
+    .select(CANDIDATE_COLUMNS)
+    .from(tools)
+    .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
+    .where(where as ReturnType<typeof and>)
+    .$dynamic();
+
+  const rows = limit ? await base.limit(limit) : await base;
+  return rows as CandidateRow[];
+}
+
+function generateReason(
+  c: CandidateRow,
+  scores: { taskRelevance: number; schemaFit: number | null; orgHistory: number | null },
+  isColdStart: boolean,
+): string {
+  const parts: string[] = [];
+  if (scores.taskRelevance >= 75) parts.push("strong task match");
+  if (c.successRate !== null && parseFloat(c.successRate) > 0.95) {
+    parts.push(`high reliability (${(parseFloat(c.successRate) * 100).toFixed(0)}% success)`);
+  }
+  if (scores.orgHistory !== null && scores.orgHistory >= 90) {
+    parts.push("proven in your own traces");
+  }
+  if (scores.schemaFit !== null && scores.schemaFit >= 70) {
+    parts.push("input schema closely matches what you have");
+  }
+  if (c.p95LatencyMs !== null && parseFloat(c.p95LatencyMs) < 500) {
+    parts.push(`low latency (p95 ${Math.round(parseFloat(c.p95LatencyMs))}ms)`);
+  }
+  if (c.isOpenSource) parts.push("open source");
+  if (isColdStart) parts.push("based on seeded benchmark data");
+  if (parts.length === 0) return `Candidate in ${c.category} for this task.`;
+  return capitalize(parts.join(", ")) + ".";
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? (sorted[mid] ?? 0)
+    : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}

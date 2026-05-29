@@ -1,15 +1,18 @@
 import {
   sendIngest,
+  sendDiscover,
   IngestClientError,
   type AgentGraphConfig,
+  type DiscoverOptions,
 } from "./client.js";
 import { Trace, type TraceOptions } from "./trace.js";
 import { applyRedaction } from "./redact.js";
-import type { IngestPayload, TraceStepInput } from "@agentgraph/types";
+import type { IngestPayload, TraceStepInput, DiscoverResponse } from "@agentgraph/types";
 
 export { Span } from "./span.js";
 export { Trace, type TraceOptions } from "./trace.js";
 export type { AgentGraphConfig } from "./client.js";
+export type { DiscoverOptions } from "./client.js";
 export { IngestClientError, IngestServerError } from "./client.js";
 export type { RedactOptions } from "./redact.js";
 
@@ -40,6 +43,15 @@ export class AgentGraph {
       (payload) => this.deliver(payload),
       (step: TraceStepInput) => applyRedaction(step, this.config)
     );
+  }
+
+  /**
+   * Ask which tool to use for a task, at runtime. Optionally restrict to the
+   * tools this agent can actually call via `options.availableTools`. Returns
+   * task-ranked tools with their input/output schemas.
+   */
+  discover(task: string, options: DiscoverOptions = {}): Promise<DiscoverResponse> {
+    return sendDiscover(this.config, task, options);
   }
 
   /**

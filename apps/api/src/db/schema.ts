@@ -35,6 +35,11 @@ export const organizations = pgTable("organizations", {
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
   tracesUsedThisMonth: integer("traces_used_this_month").default(0).notNull(),
+  // When true, this org's anonymised tool telemetry contributes to the
+  // cross-project global benchmarks that power discovery/recommendations.
+  // Opting out keeps the org's own per-project stats but excludes it from the
+  // shared pool. See docs/DATA_GOVERNANCE.md.
+  shareAnonymizedStats: boolean("share_anonymized_stats").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -187,6 +192,11 @@ export const tools = pgTable(
     // the swap-recommendation engine for "schema fit" scoring. Null = unknown.
     inputSchema: text("input_schema"),
     outputSchema: text("output_schema"),
+    // Semantic embedding of name+description+tags, stored as a JSON float array
+    // (portable across any Postgres — no pgvector extension required). Populated
+    // by catalog sync / backfill; null when embeddings are unconfigured, in
+    // which case discovery falls back to keyword/FTS relevance.
+    embedding: text("embedding"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },

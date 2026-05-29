@@ -34,6 +34,8 @@ export const organizations = pgTable("organizations", {
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
   tracesUsedThisMonth: integer("traces_used_this_month").default(0).notNull(),
+  // Mirror of apps/api schema — gates inclusion in the shared global stats pool.
+  shareAnonymizedStats: boolean("share_anonymized_stats").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -178,6 +180,8 @@ export const tools = pgTable("tools", {
   // the swap-recommendation engine for "schema fit" scoring. Null = unknown.
   inputSchema: text("input_schema"),
   outputSchema: text("output_schema"),
+  // Semantic embedding (JSON float array) — populated by catalog sync.
+  embedding: text("embedding"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });

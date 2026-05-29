@@ -1,4 +1,9 @@
-import type { IngestPayload, IngestResponse } from "@agentgraph/types";
+import type {
+  IngestPayload,
+  IngestResponse,
+  DiscoverQuery,
+  DiscoverResponse,
+} from "@agentgraph/types";
 import type { RedactOptions } from "./redact.js";
 
 export interface AgentGraphConfig extends RedactOptions {
@@ -62,4 +67,37 @@ export async function sendIngest(
   }
 
   return res.json() as Promise<IngestResponse>;
+}
+
+/** Options for {@link sendDiscover} — everything except the required `task`. */
+export type DiscoverOptions = Partial<Omit<DiscoverQuery, "task">>;
+
+/**
+ * Ask AgentGraph which tool to use for a task, at runtime. Returns task-ranked
+ * tools with their schemas. Same error semantics as {@link sendIngest}.
+ */
+export async function sendDiscover(
+  config: AgentGraphConfig,
+  task: string,
+  options: DiscoverOptions = {},
+): Promise<DiscoverResponse> {
+  const base = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const url = `${base}/v1/discover`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({ task, ...options }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status >= 500) throw new IngestServerError(res.status, text);
+    throw new IngestClientError(res.status, text);
+  }
+
+  return res.json() as Promise<DiscoverResponse>;
 }
