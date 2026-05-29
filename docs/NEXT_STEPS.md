@@ -4,6 +4,15 @@
 **Owner:** @nrana-pixel
 **One-line thesis:** Stop being "another LLM observability tool." Become the **tool-selection / routing layer for MCP-era agents**, and use observability purely as the data flywheel that powers it.
 
+> **Progress (first build pass):**
+> - ✅ **A** — `POST /v1/discover` + SDK `ag.discover()` + `@agentgraph/mcp-server` (search_tools / get_tool_schema over stdio).
+> - ✅ **B** — task-fit + schema-fit + reliability + org-history + latency scoring; pluggable embeddings (FTS fallback); `tools.embedding` column.
+> - ✅ **C** — `mcpCatalogSync` cron (Firecrawl-based) + weekly schedule. *Needs `FIRECRAWL_API_KEY` + a real registry run to actually seed.*
+> - ✅ **D** — `docs/VALIDATION_SCRIPT.md` (run the interviews — this gates further investment).
+> - ✅ **E** — `share_anonymized_stats` opt-out enforced in the global pool + `docs/DATA_GOVERNANCE.md`. *Still TODO: dashboard toggle + min-k anonymity threshold.*
+>
+> **Run `apps/api` migration `0006` before deploying.** Next up: ship the dashboard `shareAnonymizedStats` toggle, run Workstream D interviews, and do a real Firecrawl seed run.
+
 ---
 
 ## 0. Why we're changing direction

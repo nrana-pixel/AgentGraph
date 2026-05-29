@@ -7,6 +7,7 @@ import { runStatsAggregator } from "./crons/statsAggregator.js";
 import { runSentimentFetcher } from "./crons/sentimentFetcher.js";
 import { runDailyDigest } from "./crons/dailyDigest.js";
 import { runWarehouseExport } from "./crons/warehouseExport.js";
+import { runMcpCatalogSync } from "./crons/mcpCatalogSync.js";
 
 const databaseUrl = process.env["DATABASE_URL"];
 const redisUrl = process.env["REDIS_URL"];
@@ -83,6 +84,23 @@ function scheduleWeeklyCron(): void {
   }, msUntilNext);
 }
 
+// Schedule weekly MCP catalog sync on Sunday at 05:00 UTC (after sentiment)
+function scheduleCatalogSyncCron(): void {
+  const now = new Date();
+  const next = new Date(now);
+  const daysUntilSunday = (7 - now.getUTCDay()) % 7 || 7;
+  next.setUTCDate(now.getUTCDate() + daysUntilSunday);
+  next.setUTCHours(5, 0, 0, 0);
+
+  const msUntilNext = next.getTime() - now.getTime();
+  console.log(`[worker] mcp catalog sync scheduled in ${Math.round(msUntilNext / 3600000)}h`);
+
+  setTimeout(() => {
+    runMcpCatalogSync(db).catch(console.error);
+    setInterval(() => runMcpCatalogSync(db).catch(console.error), 7 * 24 * 60 * 60 * 1000);
+  }, msUntilNext);
+}
+
 // Health check server so Render can run this as a Web Service
 const port = process.env["PORT"] ?? "3001";
 http.createServer((_, res) => {
@@ -97,6 +115,7 @@ scheduleDailyCron();
 scheduleDailyDigestCron();
 scheduleWarehouseExportCron();
 scheduleWeeklyCron();
+scheduleCatalogSyncCron();
 
 // The ingest consumer runs indefinitely in the main loop
 await startIngestConsumer(redisUrl, databaseUrl);

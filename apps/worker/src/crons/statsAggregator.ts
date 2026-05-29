@@ -58,6 +58,12 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
         AVG(ts.avg_latency_ms) AS avg_latency_ms,
         MAX(ts.p95_latency_ms) AS p95_latency_ms
       FROM tool_stats ts
+      -- Only orgs that opted into sharing contribute to the cross-project pool.
+      -- Per-project tool_stats above are unaffected; this gates the shared
+      -- global benchmark only. See docs/DATA_GOVERNANCE.md.
+      JOIN projects p ON p.id = ts.project_id
+      JOIN organizations o ON o.id = p.org_id
+      WHERE o.share_anonymized_stats = true
       GROUP BY ts.tool_slug
     ),
     category_max AS (
