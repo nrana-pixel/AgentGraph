@@ -137,12 +137,14 @@ function scheduleCatalogSyncCron(): void {
 
 // Health check server so Render can run this as a Web Service
 const port = process.env["PORT"] ?? "3001";
-http.createServer((_, res) => {
-  res.writeHead(200);
-  res.end("ok");
-}).listen(port, () => {
-  console.log(`[worker] health check listening on port ${port}`);
-});
+http
+  .createServer((_, res) => {
+    res.writeHead(200);
+    res.end("ok");
+  })
+  .listen(port, () => {
+    console.log(`[worker] health check listening on port ${port}`);
+  });
 
 console.log("[worker] starting background workers");
 scheduleToolQualityScanCron();
@@ -153,5 +155,27 @@ scheduleWarehouseExportCron();
 scheduleWeeklyCron();
 scheduleCatalogSyncCron();
 
-// The ingest consumer runs indefinitely in the main loop
-await startIngestConsumer(redisUrl, databaseUrl);
+// Graceful shutdown: signal the consumer loop to stop after its current item,
+// so a redeploy doesn't SIGKILL the worker mid-transaction. The consumer drains
+// its own DB/Redis connections when the loop exits.
+let stopping = false;
+process.on("SIGTERM", () => {
+  console.log("[worker] SIGTERM received — finishing current item then exiting");
+  stopping = true;
+});
+process.on("SIGINT", () => {
+  console.log("[worker] SIGINT received — finishing current item then exiting");
+  stopping = true;
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[worker] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[worker] uncaughtException:", err);
+  stopping = true;
+});
+
+// The ingest consumer runs in the main loop until shutdown is signalled.
+await startIngestConsumer(redisUrl, databaseUrl, () => stopping);
+await pgClient.end({ timeout: 5 }).catch(() => {});
+process.exit(0);

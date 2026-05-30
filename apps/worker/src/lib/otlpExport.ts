@@ -9,6 +9,7 @@ import {
   TraceFlags,
 } from "@opentelemetry/api";
 import type { Project, Trace, TraceStep } from "../db/schema.js";
+import { assertPublicWebhookUrl } from "./ssrfGuard.js";
 
 // ---------------------------------------------------------------------------
 // OTLP trace export
@@ -68,12 +69,10 @@ export function stepToSpanData(traceId: string, step: TraceStep): OtlpSpanData {
   };
 
   if (step.model) attributes["gen_ai.request.model"] = step.model;
-  if (step.promptTokens != null)
-    attributes["gen_ai.usage.input_tokens"] = step.promptTokens;
+  if (step.promptTokens != null) attributes["gen_ai.usage.input_tokens"] = step.promptTokens;
   if (step.completionTokens != null)
     attributes["gen_ai.usage.output_tokens"] = step.completionTokens;
-  if (step.totalTokens != null)
-    attributes["gen_ai.usage.total_tokens"] = step.totalTokens;
+  if (step.totalTokens != null) attributes["gen_ai.usage.total_tokens"] = step.totalTokens;
   if (step.costUsd != null) attributes["agentgraph.cost_usd"] = Number(step.costUsd);
   if (step.toolName) attributes["agentgraph.tool.name"] = step.toolName;
   if (step.toolVersion) attributes["agentgraph.tool.version"] = step.toolVersion;
@@ -173,6 +172,11 @@ export async function exportTraceToOtlp(
     if (!project.otlpEnabled || !project.otlpEndpoint) return;
     if (steps.length === 0) return;
 
+    // Connect-time SSRF re-check (authoritative boundary): re-resolves the host
+    // and rejects internal/loopback/link-local/metadata targets, defending
+    // against DNS rebinding even if the endpoint passed validation at save time.
+    await assertPublicWebhookUrl(project.otlpEndpoint);
+
     const resource = new Resource({ "service.name": SERVICE_NAME });
     const spanData = steps.map((step) => stepToSpanData(trace.id, step));
     const spans = spanData.map((d) => toReadableSpan(d, resource));
@@ -185,11 +189,7 @@ export async function exportTraceToOtlp(
     await new Promise<void>((resolve) => {
       exporter.export(spans, (result) => {
         if (result.code !== 0) {
-          console.error(
-            "[otlp-export] export failed for trace",
-            trace.id,
-            result.error ?? "",
-          );
+          console.error("[otlp-export] export failed for trace", trace.id, result.error ?? "");
         }
         resolve();
       });

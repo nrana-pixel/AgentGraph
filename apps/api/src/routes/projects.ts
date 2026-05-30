@@ -1,12 +1,27 @@
 import { Router, type Request, type Response } from "express";
 import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { traces, traceSteps, projects, organizations, apiKeys, webhooks, orgMembers, users } from "../db/schema.js";
+import {
+  traces,
+  traceSteps,
+  projects,
+  organizations,
+  apiKeys,
+  webhooks,
+  orgMembers,
+  users,
+} from "../db/schema.js";
 import { clerkSessionAuth, type ClerkAuthedRequest } from "../middleware/clerkSessionAuth.js";
 import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import { resolveProjectAccess } from "../middleware/projectAccess.js";
-import { CreateProjectSchema, CreateApiKeySchema, UpdateProjectSettingsSchema, UpdateOtlpConfigSchema } from "@agentgraph/types";
+import { assertPublicWebhookUrl } from "../lib/ssrfGuard.js";
+import {
+  CreateProjectSchema,
+  CreateApiKeySchema,
+  UpdateProjectSettingsSchema,
+  UpdateOtlpConfigSchema,
+} from "@agentgraph/types";
 import bcrypt from "bcrypt";
 import { randomBytes } from "crypto";
 import { v4 as uuidv4 } from "uuid";
@@ -26,7 +41,12 @@ router.get(
     const authed = req as ClerkAuthedRequest;
 
     const rows = await db
-      .select({ id: projects.id, name: projects.name, slug: projects.slug, createdAt: projects.createdAt })
+      .select({
+        id: projects.id,
+        name: projects.name,
+        slug: projects.slug,
+        createdAt: projects.createdAt,
+      })
       .from(projects)
       .innerJoin(organizations, eq(projects.orgId, organizations.id))
       .innerJoin(orgMembers, eq(organizations.id, orgMembers.orgId))
@@ -107,26 +127,49 @@ router.get(
       .select({
         date: sql<string>`DATE(${traces.startedAt})`.as("date"),
         traceCount: sql<number>`COUNT(*)::int`.as("trace_count"),
-        completedCount: sql<number>`COUNT(*) FILTER (WHERE ${traces.status} = 'completed')::int`.as("completed_count"),
-        errorCount: sql<number>`COUNT(*) FILTER (WHERE ${traces.status} = 'error')::int`.as("error_count"),
+        completedCount: sql<number>`COUNT(*) FILTER (WHERE ${traces.status} = 'completed')::int`.as(
+          "completed_count",
+        ),
+        errorCount: sql<number>`COUNT(*) FILTER (WHERE ${traces.status} = 'error')::int`.as(
+          "error_count",
+        ),
         totalTokens: sql<number>`COALESCE(SUM(${traces.totalTokens}), 0)::int`.as("total_tokens"),
-        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`.as("total_cost_usd"),
+        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`.as(
+          "total_cost_usd",
+        ),
       })
       .from(traces)
-      .where(and(eq(traces.projectId, projectId), gte(traces.startedAt, from), lte(traces.startedAt, to)))
+      .where(
+        and(
+          eq(traces.projectId, projectId),
+          gte(traces.startedAt, from),
+          lte(traces.startedAt, to),
+        ),
+      )
       .groupBy(sql`DATE(${traces.startedAt})`)
       .orderBy(sql`DATE(${traces.startedAt})`);
 
     const costByModel = await db
       .select({
         model: traceSteps.model,
-        totalTokens: sql<number>`COALESCE(SUM(${traceSteps.totalTokens}), 0)::int`.as("total_tokens"),
-        totalCostUsd: sql<number>`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)::float8`.as("total_cost_usd"),
+        totalTokens: sql<number>`COALESCE(SUM(${traceSteps.totalTokens}), 0)::int`.as(
+          "total_tokens",
+        ),
+        totalCostUsd: sql<number>`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)::float8`.as(
+          "total_cost_usd",
+        ),
         callCount: sql<number>`COUNT(*)::int`.as("call_count"),
       })
       .from(traceSteps)
       .innerJoin(traces, eq(traceSteps.traceId, traces.id))
-      .where(and(eq(traces.projectId, projectId), eq(traceSteps.type, "llm_call"), gte(traces.startedAt, from), lte(traces.startedAt, to)))
+      .where(
+        and(
+          eq(traces.projectId, projectId),
+          eq(traceSteps.type, "llm_call"),
+          gte(traces.startedAt, from),
+          lte(traces.startedAt, to),
+        ),
+      )
       .groupBy(traceSteps.model)
       .orderBy(desc(sql`COALESCE(SUM(${traceSteps.costUsd}::numeric), 0)::float8`));
 
@@ -134,13 +177,24 @@ router.get(
       .select({
         agentId: traces.agentId,
         traceCount: sql<number>`COUNT(*)::int`.as("trace_count"),
-        errorRate: sql<number>`(ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4))::float8`.as("error_rate"),
+        errorRate:
+          sql<number>`(ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4))::float8`.as(
+            "error_rate",
+          ),
         totalTokens: sql<number>`COALESCE(SUM(${traces.totalTokens}), 0)::int`.as("total_tokens"),
-        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`.as("total_cost_usd"),
+        totalCostUsd: sql<number>`COALESCE(SUM(${traces.totalCostUsd}::numeric), 0)::float8`.as(
+          "total_cost_usd",
+        ),
         avgLatencyMs: sql<number>`ROUND(AVG(${traces.totalLatencyMs}))::int`.as("avg_latency_ms"),
       })
       .from(traces)
-      .where(and(eq(traces.projectId, projectId), gte(traces.startedAt, from), lte(traces.startedAt, to)))
+      .where(
+        and(
+          eq(traces.projectId, projectId),
+          gte(traces.startedAt, from),
+          lte(traces.startedAt, to),
+        ),
+      )
       .groupBy(traces.agentId)
       .orderBy(desc(sql`COUNT(*)`))
       .limit(10);
@@ -153,9 +207,23 @@ router.get(
         errorRate: sql<number>`(ROUND(COUNT(*) FILTER (WHERE ${traces.status} = 'error')::numeric / NULLIF(COUNT(*), 0), 4))::float8`,
       })
       .from(traces)
-      .where(and(eq(traces.projectId, projectId), gte(traces.startedAt, from), lte(traces.startedAt, to)));
+      .where(
+        and(
+          eq(traces.projectId, projectId),
+          gte(traces.startedAt, from),
+          lte(traces.startedAt, to),
+        ),
+      );
 
-    res.json({ projectId, from: from.toISOString(), to: to.toISOString(), totals, dailyStats, costByModel, topAgents });
+    res.json({
+      projectId,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      totals,
+      dailyStats,
+      costByModel,
+      topAgents,
+    });
   },
 );
 
@@ -257,7 +325,12 @@ router.get(
     const PLAN_LIMITS: Record<string, number> = { free: 10_000, pro: 500_000, team: 5_000_000 };
 
     const [row] = await db
-      .select({ plan: organizations.plan, tracesUsed: organizations.tracesUsedThisMonth, stripeCustomerId: organizations.stripeCustomerId, costSpikeThresholdUsd: projects.costSpikeThresholdUsd })
+      .select({
+        plan: organizations.plan,
+        tracesUsed: organizations.tracesUsedThisMonth,
+        stripeCustomerId: organizations.stripeCustomerId,
+        costSpikeThresholdUsd: projects.costSpikeThresholdUsd,
+      })
       .from(projects)
       .innerJoin(organizations, eq(projects.orgId, organizations.id))
       .where(eq(projects.id, projectId));
@@ -274,7 +347,8 @@ router.get(
       tracesLimit: limit,
       usagePct: Math.min(1, row.tracesUsed / limit),
       hasPaymentMethod: Boolean(row.stripeCustomerId),
-      costSpikeThresholdUsd: row.costSpikeThresholdUsd !== null ? Number(row.costSpikeThresholdUsd) : null,
+      costSpikeThresholdUsd:
+        row.costSpikeThresholdUsd !== null ? Number(row.costSpikeThresholdUsd) : null,
     });
   },
 );
@@ -288,7 +362,13 @@ router.get(
     if (!projectId) return;
 
     const rows = await db
-      .select({ id: webhooks.id, url: webhooks.url, events: webhooks.events, enabled: webhooks.enabled, createdAt: webhooks.createdAt })
+      .select({
+        id: webhooks.id,
+        url: webhooks.url,
+        events: webhooks.events,
+        enabled: webhooks.enabled,
+        createdAt: webhooks.createdAt,
+      })
       .from(webhooks)
       .where(eq(webhooks.projectId, projectId))
       .orderBy(desc(webhooks.createdAt));
@@ -340,7 +420,9 @@ router.patch(
 
     res.json({
       costSpikeThresholdUsd:
-        updated[0]!.costSpikeThresholdUsd !== null ? Number(updated[0]!.costSpikeThresholdUsd) : null,
+        updated[0]!.costSpikeThresholdUsd !== null
+          ? Number(updated[0]!.costSpikeThresholdUsd)
+          : null,
       monthlyCostCapUsd:
         updated[0]!.monthlyCostCapUsd !== null ? Number(updated[0]!.monthlyCostCapUsd) : null,
     });
@@ -365,6 +447,22 @@ router.patch(
     if (!parsed.success) {
       res.status(400).json({ error: "validation_error" });
       return;
+    }
+
+    // SSRF guard: the worker POSTs trace data + caller-supplied headers to this
+    // endpoint, so it must not point at internal/loopback/link-local/metadata
+    // addresses. Same guard the webhook path uses (the worker re-checks at
+    // connect time as the authoritative boundary).
+    if (parsed.data.otlpEnabled && parsed.data.otlpEndpoint) {
+      try {
+        await assertPublicWebhookUrl(parsed.data.otlpEndpoint);
+      } catch (err) {
+        res.status(400).json({
+          error: "invalid_otlp_endpoint",
+          message: err instanceof Error ? err.message : "otlp endpoint not allowed",
+        });
+        return;
+      }
     }
 
     const updated = await db

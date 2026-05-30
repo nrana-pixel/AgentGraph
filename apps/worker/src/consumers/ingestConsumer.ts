@@ -31,15 +31,36 @@ async function deadLetter(redis: Redis, raw: string, reason: string): Promise<vo
   }
 }
 
-export async function startIngestConsumer(redisUrl: string, databaseUrl: string): Promise<void> {
-  const pgClient = postgres(databaseUrl);
+export async function startIngestConsumer(
+  redisUrl: string,
+  databaseUrl: string,
+  shouldStop: () => boolean = () => false,
+): Promise<void> {
+  const pgClient = postgres(databaseUrl, {
+    max: Number(process.env["DB_POOL_MAX"] ?? 10),
+    idle_timeout: 30,
+    connect_timeout: 10,
+    connection: {
+      statement_timeout: Number(process.env["DB_STATEMENT_TIMEOUT_MS"] ?? 30_000),
+    },
+  });
   const db = drizzle(pgClient);
   const redis = new Redis(redisUrl);
 
   console.log("[ingest-consumer] started, polling queue:", QUEUE_KEY);
 
-  while (true) {
-    const result = await redis.brpop(QUEUE_KEY, 1);
+  while (!shouldStop()) {
+    // Guard the blocking pop: a Redis blip rejects brpop. Back off and retry
+    // instead of letting the rejection escape and crash the worker. The item
+    // is only removed once brpop resolves, so a failed pop loses nothing.
+    let result: [string, string] | null;
+    try {
+      result = await redis.brpop(QUEUE_KEY, 1);
+    } catch (err) {
+      console.error("[ingest-consumer] brpop failed; backing off 1s:", err);
+      await new Promise((r) => setTimeout(r, 1000));
+      continue;
+    }
     if (!result) continue;
 
     const [, raw] = result;
@@ -237,6 +258,20 @@ export async function startIngestConsumer(redisUrl: string, databaseUrl: string)
         ).catch((e) => console.error("[ingest-consumer] otlp export failed:", e));
       }
     } catch (err) {
+      // Distinguish a transient DB/connection outage from a permanent payload
+      // failure. On an outage we must NOT dead-letter the whole live stream —
+      // re-queue the item (LPUSH back to the tail it came from) and back off,
+      // so the data survives the outage instead of draining into the dead list.
+      if (isTransientDbError(err)) {
+        console.error("[ingest-consumer] transient DB error; requeueing + backing off:", err);
+        try {
+          await redis.rpush(QUEUE_KEY, raw);
+        } catch (requeueErr) {
+          console.error("[ingest-consumer] requeue failed:", requeueErr);
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
       console.error("[ingest-consumer] db transaction failed:", err);
       await deadLetter(
         redis,
@@ -245,6 +280,26 @@ export async function startIngestConsumer(redisUrl: string, databaseUrl: string)
       );
     }
   }
+
+  // Loop exited via shouldStop() — drain connections for a clean shutdown.
+  console.log("[ingest-consumer] stopping; closing connections");
+  await Promise.allSettled([pgClient.end({ timeout: 5 }), redis.quit()]);
+}
+
+// Connection-level / transient Postgres errors — re-queue rather than dead-letter.
+function isTransientDbError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code ?? "";
+  // postgres.js connection errors + Postgres class 08 (connection exception)
+  // and 57P0x (admin shutdown / cannot connect now).
+  return (
+    code === "CONNECTION_ENDED" ||
+    code === "CONNECTION_CLOSED" ||
+    code === "CONNECTION_DESTROYED" ||
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    code.startsWith("08") ||
+    code.startsWith("57P")
+  );
 }
 
 // Fallback used when a project has no configured cost-spike threshold.

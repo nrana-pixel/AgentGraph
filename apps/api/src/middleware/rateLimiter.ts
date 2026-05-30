@@ -11,11 +11,7 @@ const MAX_REQUESTS = 1_000; // per API key per minute
  * Score: timestamp in ms
  * Members: unique request ID (timestamp + random)
  */
-export async function rateLimiter(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
+export async function rateLimiter(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers["authorization"];
   if (!authHeader?.startsWith("Bearer ")) {
     next();
@@ -33,14 +29,23 @@ export async function rateLimiter(
   const windowStart = now - WINDOW_MS;
   const member = `${now}-${Math.random().toString(36).slice(2)}`;
 
-  const pipeline = redis.pipeline();
-  pipeline.zremrangebyscore(redisKey, "-inf", windowStart); // remove old entries
-  pipeline.zadd(redisKey, now, member); // add current request
-  pipeline.zcard(redisKey); // count requests in window
-  pipeline.pexpire(redisKey, WINDOW_MS); // auto-expire the key
+  let count = 0;
+  try {
+    const pipeline = redis.pipeline();
+    pipeline.zremrangebyscore(redisKey, "-inf", windowStart); // remove old entries
+    pipeline.zadd(redisKey, now, member); // add current request
+    pipeline.zcard(redisKey); // count requests in window
+    pipeline.pexpire(redisKey, WINDOW_MS); // auto-expire the key
 
-  const results = await pipeline.exec();
-  const count = (results?.[2]?.[1] as number) ?? 0;
+    const results = await pipeline.exec();
+    count = (results?.[2]?.[1] as number) ?? 0;
+  } catch (err) {
+    // Fail OPEN: a Redis outage must not 500 every authenticated request.
+    // Better to briefly under-enforce the limit than to take the API down.
+    console.error("[rate-limiter] redis error; allowing request:", err);
+    next();
+    return;
+  }
 
   res.setHeader("X-RateLimit-Limit", MAX_REQUESTS);
   res.setHeader("X-RateLimit-Remaining", Math.max(0, MAX_REQUESTS - count));
