@@ -11,7 +11,13 @@
 > - ✅ **D** — `docs/VALIDATION_SCRIPT.md` (run the interviews — this gates further investment).
 > - ✅ **E** — `share_anonymized_stats` opt-out enforced in the global pool + `docs/DATA_GOVERNANCE.md`. *Still TODO: dashboard toggle + min-k anonymity threshold.*
 >
-> **Run `apps/api` migration `0006` before deploying.** Next up: ship the dashboard `shareAnonymizedStats` toggle, run Workstream D interviews, and do a real Firecrawl seed run.
+> **Build-Now tier — the "credit rating for AI tools" wedge (specs in `docs/specs/`):**
+> - ✅ **Spec 01** — Tool Reliability Score: `toolGlobalStats.reliabilityScore`/`gradeBand`/`distinctOrgs`, nightly compute in `statsAggregator` with a **min-k=3 anonymity gate**, `GET /v1/tools/:slug/reliability`.
+> - ✅ **Spec 02** — Regression "Downdetector": `tool_global_stats_history` snapshots, `detectRegressions` thresholds, `tool_regression` signed webhook (fires only to affected projects, with a suggested swap), `definitionHash` rug-pull signal, `GET /v1/tools/:slug/health`.
+> - ✅ **Spec 03** — Tool-description quality: `scoreToolDescription` + `toolQualityScan` cron + columns on `tools`; surfaced in the tools API.
+> - ✅ **Spec 04** — Tool-Search reranker: `POST /v1/rerank` + `discoveryEngine.rerankCandidates` + SDK `ag.rerank()` (sits above Anthropic's quality-blind Tool Search).
+>
+> **Run `apps/api` migration `0006` AND `0007` before deploying.** New env (optional): `EMBEDDING_API_KEY` (semantic ranking), `FIRECRAWL_API_KEY` (catalog seed). Next up: ship the dashboard `shareAnonymizedStats` toggle, run Workstream D interviews, do a real Firecrawl seed run, and add the `errorTaxonomy` bucketing (deferred TODO in `statsAggregator`).
 
 ---
 
