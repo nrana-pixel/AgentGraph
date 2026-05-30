@@ -11,11 +11,7 @@ import {
   type ToolReliabilityResponse,
   type ToolHealthResponse,
 } from "@agentgraph/types";
-import {
-  detectRegressions,
-  median,
-  type ToolSnapshot,
-} from "../lib/regressionDetect.js";
+import { detectRegressions, median, type ToolSnapshot } from "../lib/regressionDetect.js";
 import { getRecommendations } from "../services/recommendationEngine.js";
 import { redis, RECOMMEND_CACHE_PREFIX } from "../db/redis.js";
 
@@ -83,74 +79,71 @@ router.get(
 );
 
 // GET /v1/tools — list tool catalog (dashboard + SDK)
-router.get(
-  "/",
-  rateLimiter,
-  flexAuth,
-  async (req: Request, res: Response): Promise<void> => {
-    const parsed = PaginationSchema.safeParse(req.query);
-    if (!parsed.success) {
-      res.status(400).json({ error: "validation_error" });
-      return;
-    }
+router.get("/", rateLimiter, flexAuth, async (req: Request, res: Response): Promise<void> => {
+  const parsed = PaginationSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "validation_error" });
+    return;
+  }
 
-    const { page, limit } = parsed.data;
-    const rawCategory = req.query["category"];
-    if (rawCategory !== undefined && typeof rawCategory !== "string") {
-      res.status(400).json({ error: "validation_error", message: "category must be a single string value" });
-      return;
-    }
-    const category = rawCategory;
+  const { page, limit } = parsed.data;
+  const rawCategory = req.query["category"];
+  if (rawCategory !== undefined && typeof rawCategory !== "string") {
+    res
+      .status(400)
+      .json({ error: "validation_error", message: "category must be a single string value" });
+    return;
+  }
+  const category = rawCategory;
 
-    let query = db
-      .select({
-        id: tools.id,
-        slug: tools.slug,
-        name: tools.name,
-        description: tools.description,
-        category: tools.category,
-        website: tools.website,
-        docsUrl: tools.docsUrl,
-        githubUrl: tools.githubUrl,
-        isOpenSource: tools.isOpenSource,
-        isSelfHostable: tools.isSelfHostable,
-        pricingModel: tools.pricingModel,
-        dataResidency: tools.dataResidency,
-        tags: tools.tags,
-        dataSource: tools.dataSource,
-        sentimentScore: tools.sentimentScore,
-        successRate: toolGlobalStats.successRate,
-        avgLatencyMs: toolGlobalStats.avgLatencyMs,
-        p95LatencyMs: toolGlobalStats.p95LatencyMs,
-        totalCalls: toolGlobalStats.totalCalls,
-        popularityScore: toolGlobalStats.popularityScore,
-        reliabilityScore: toolGlobalStats.reliabilityScore,
-        gradeBand: toolGlobalStats.gradeBand,
-        descriptionQualityScore: tools.descriptionQualityScore,
-        qualityIssues: tools.qualityIssues,
-      })
-      .from(tools)
-      .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
-      .$dynamic();
+  let query = db
+    .select({
+      id: tools.id,
+      slug: tools.slug,
+      name: tools.name,
+      description: tools.description,
+      category: tools.category,
+      website: tools.website,
+      docsUrl: tools.docsUrl,
+      githubUrl: tools.githubUrl,
+      isOpenSource: tools.isOpenSource,
+      isSelfHostable: tools.isSelfHostable,
+      pricingModel: tools.pricingModel,
+      dataResidency: tools.dataResidency,
+      tags: tools.tags,
+      dataSource: tools.dataSource,
+      sentimentScore: tools.sentimentScore,
+      successRate: toolGlobalStats.successRate,
+      avgLatencyMs: toolGlobalStats.avgLatencyMs,
+      p95LatencyMs: toolGlobalStats.p95LatencyMs,
+      totalCalls: toolGlobalStats.totalCalls,
+      popularityScore: toolGlobalStats.popularityScore,
+      reliabilityScore: toolGlobalStats.reliabilityScore,
+      gradeBand: toolGlobalStats.gradeBand,
+      descriptionQualityScore: tools.descriptionQualityScore,
+      qualityIssues: tools.qualityIssues,
+    })
+    .from(tools)
+    .leftJoin(toolGlobalStats, eq(tools.slug, toolGlobalStats.toolSlug))
+    .$dynamic();
 
-    if (category) {
-      query = query.where(eq(tools.category, category));
-    }
+  if (category) {
+    query = query.where(eq(tools.category, category));
+  }
 
-    const rows = await query.limit(limit).offset((page - 1) * limit);
+  const rows = await query.limit(limit).offset((page - 1) * limit);
 
-    // qualityIssues is stored as a JSON string; surface it as a parsed array
-    // to match the ToolListItem contract.
-    const toolsOut = rows.map((r) => ({
-      ...r,
-      qualityIssues: parseQualityIssues(r.qualityIssues),
-    }));
+  // qualityIssues is stored as a JSON string; surface it as a parsed array
+  // to match the ToolListItem contract.
+  const toolsOut = rows.map((r) => ({
+    ...r,
+    qualityIssues: parseQualityIssues(r.qualityIssues),
+  }));
 
-    // Return project scope only for API key auth
-    const projectId = (req as AuthedRequest).projectId ?? null;
-    res.json({ tools: toolsOut, page, limit, projectId });
-  },
-);
+  // Return project scope only for API key auth
+  const projectId = (req as AuthedRequest).projectId ?? null;
+  res.json({ tools: toolsOut, page, limit, projectId });
+});
 
 // GET /v1/tools/:slug/reliability — public Reliability Score (spec 01)
 router.get(
@@ -194,13 +187,10 @@ router.get(
       name: tool.name,
       category: tool.category,
       reliabilityScore: hasScore ? Number(stats.reliabilityScore) : null,
-      gradeBand: hasScore
-        ? (stats.gradeBand as ToolReliabilityResponse["gradeBand"])
-        : null,
+      gradeBand: hasScore ? (stats.gradeBand as ToolReliabilityResponse["gradeBand"]) : null,
       successRate: stats?.successRate != null ? Number(stats.successRate) : null,
       p95LatencyMs: stats?.p95LatencyMs != null ? Number(stats.p95LatencyMs) : null,
-      costPerCallUsd:
-        stats?.costPerCallUsd != null ? Number(stats.costPerCallUsd) : null,
+      costPerCallUsd: stats?.costPerCallUsd != null ? Number(stats.costPerCallUsd) : null,
       errorTaxonomy,
       distinctOrgs,
       totalCalls: stats?.totalCalls ?? 0,
@@ -230,8 +220,7 @@ router.get(
       return;
     }
 
-    const num = (v: unknown): number | null =>
-      v === null || v === undefined ? null : Number(v);
+    const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
     // Last 30 days of history, newest first, for the sparkline + baseline.
     const thirtyDaysAgo = new Date();
@@ -310,27 +299,19 @@ router.get(
 );
 
 // GET /v1/tools/:slug — tool profile + global stats (dashboard + SDK)
-router.get(
-  "/:slug",
-  rateLimiter,
-  flexAuth,
-  async (req: Request, res: Response): Promise<void> => {
-    const { slug } = req.params as { slug: string };
+router.get("/:slug", rateLimiter, flexAuth, async (req: Request, res: Response): Promise<void> => {
+  const { slug } = req.params as { slug: string };
 
-    const [tool] = await db.select().from(tools).where(eq(tools.slug, slug));
+  const [tool] = await db.select().from(tools).where(eq(tools.slug, slug));
 
-    if (!tool) {
-      res.status(404).json({ error: "tool_not_found" });
-      return;
-    }
+  if (!tool) {
+    res.status(404).json({ error: "tool_not_found" });
+    return;
+  }
 
-    const [stats] = await db
-      .select()
-      .from(toolGlobalStats)
-      .where(eq(toolGlobalStats.toolSlug, slug));
+  const [stats] = await db.select().from(toolGlobalStats).where(eq(toolGlobalStats.toolSlug, slug));
 
-    res.json({ tool, stats: stats ?? null });
-  },
-);
+  res.json({ tool, stats: stats ?? null });
+});
 
 export default router;

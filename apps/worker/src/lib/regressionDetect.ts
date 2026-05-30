@@ -46,15 +46,11 @@ export interface Regression {
 
 /** Median of the non-null values, or null when there's nothing to median. */
 function median(values: Array<number | null | undefined>): number | null {
-  const nums = values.filter(
-    (v): v is number => typeof v === "number" && Number.isFinite(v),
-  );
+  const nums = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   if (nums.length === 0) return null;
   const sorted = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1]! + sorted[mid]!) / 2
-    : sorted[mid]!;
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
 export interface DetectOptions {

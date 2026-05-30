@@ -78,7 +78,10 @@ export async function discoverTools(
     // the agent can call so even a weak text match still gets ranked.
     candidates = await runCandidateQuery([
       ...conditions,
-      inArray(tools.slug, availableTools.map((s) => s.toLowerCase().trim())),
+      inArray(
+        tools.slug,
+        availableTools.map((s) => s.toLowerCase().trim()),
+      ),
     ]);
   } else {
     candidates = await runCandidateQuery([...conditions, toolFtsMatch(task)]);
@@ -96,7 +99,10 @@ export async function discoverTools(
   const relevanceText = context ? `${task}\n\n${context}` : task;
   const taskEmbedding = await getTaskEmbedding(relevanceText);
   const orgHistory = opts.projectId
-    ? await loadOrgHistory(opts.projectId, candidates.map((c) => c.slug))
+    ? await loadOrgHistory(
+        opts.projectId,
+        candidates.map((c) => c.slug),
+      )
     : new Map<string, number | null>();
 
   const p95Values = candidates
@@ -129,7 +135,12 @@ export async function discoverTools(
       isColdStart,
     });
 
-    return { c, score, isColdStart, scores: { taskRelevance, schemaFit, reliability, orgHistory: orgHist, latency } };
+    return {
+      c,
+      score,
+      isColdStart,
+      scores: { taskRelevance, schemaFit, reliability, orgHistory: orgHist, latency },
+    };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -243,22 +254,21 @@ export async function rerankCandidates(
     .filter((s): s is string => s !== null);
 
   const rows =
-    requestedSlugs.length > 0
-      ? await runCandidateQuery([inArray(tools.slug, requestedSlugs)])
-      : [];
+    requestedSlugs.length > 0 ? await runCandidateQuery([inArray(tools.slug, requestedSlugs)]) : [];
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
 
   const nameRows =
     requestedNames.length > 0
       ? await runCandidateQuery([sql`lower(${tools.name}) = ANY(${requestedNames})`])
       : [];
-  const byName = new Map(
-    [...rows, ...nameRows].map((r) => [r.name.toLowerCase().trim(), r]),
-  );
+  const byName = new Map([...rows, ...nameRows].map((r) => [r.name.toLowerCase().trim(), r]));
 
   // ── 2. Resolve + score, preserving the input order for unscored pass-through ─
   const orgHistory = opts.projectId
-    ? await loadOrgHistory(opts.projectId, rows.map((r) => r.slug))
+    ? await loadOrgHistory(
+        opts.projectId,
+        rows.map((r) => r.slug),
+      )
     : new Map<string, number | null>();
 
   const p95Values = rows
@@ -291,7 +301,13 @@ export async function rerankCandidates(
       orgHistory: orgHist,
       latency,
     };
-    const score = computeRerankScore({ reliability, latency, orgHistory: orgHist, taskRelevance, isColdStart });
+    const score = computeRerankScore({
+      reliability,
+      latency,
+      orgHistory: orgHist,
+      taskRelevance,
+      isColdStart,
+    });
 
     scored.push({
       tool: toDiscoveredTool(row, {
@@ -361,7 +377,11 @@ function passthroughTool(
 }
 
 function slugify(s: string): string {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /** Reliability signal for rerank: prefer the published Reliability Score (spec
@@ -459,8 +479,26 @@ function tokenize(text: string): Set<string> {
 }
 
 const STOPWORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "from", "into", "your", "you",
-  "are", "can", "use", "using", "tool", "tools", "best", "via", "how", "what",
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "this",
+  "from",
+  "into",
+  "your",
+  "you",
+  "are",
+  "can",
+  "use",
+  "using",
+  "tool",
+  "tools",
+  "best",
+  "via",
+  "how",
+  "what",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -482,8 +520,7 @@ async function getTaskEmbedding(text: string): Promise<number[] | null> {
   if (!embeddingsEnabled()) return null; // no provider → skip Redis entirely
   const model = process.env["EMBEDDING_MODEL"] ?? "default";
   const key =
-    TASK_EMBEDDING_CACHE_PREFIX +
-    createHash("sha256").update(`${model} ${text}`).digest("hex");
+    TASK_EMBEDDING_CACHE_PREFIX + createHash("sha256").update(`${model} ${text}`).digest("hex");
 
   try {
     const cached = await redis.get(key);
@@ -537,9 +574,7 @@ async function loadOrgHistory(
       errorCount: toolUsageStats.errorCount,
     })
     .from(toolUsageStats)
-    .where(
-      and(eq(toolUsageStats.projectId, projectId), inArray(toolUsageStats.toolSlug, slugs)),
-    );
+    .where(and(eq(toolUsageStats.projectId, projectId), inArray(toolUsageStats.toolSlug, slugs)));
   for (const r of rows) {
     if (r.calls < ORG_HISTORY_MIN_CALLS) continue;
     out.set(r.toolSlug, clamp((1 - r.errorCount / r.calls) * 100, 0, 100));

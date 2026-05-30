@@ -18,37 +18,32 @@ const RERANK_CACHE_TTL_S = 60;
 // (Anthropic Tool Search, a vector index, …). Takes a pre-selected candidate
 // list and reranks it by real-world reliability. Returns DiscoveredTool[],
 // reusing the /discover item shape.
-router.post(
-  "/",
-  rateLimiter,
-  flexAuth,
-  async (req: Request, res: Response): Promise<void> => {
-    const parsed = RerankQuerySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: "validation_error",
-        message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
-      });
-      return;
-    }
+router.post("/", rateLimiter, flexAuth, async (req: Request, res: Response): Promise<void> => {
+  const parsed = RerankQuerySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "validation_error",
+      message: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+    });
+    return;
+  }
 
-    const query = parsed.data;
-    // Org history is per-project, so scope the cache by projectId too (null for
-    // dashboard/Clerk reads that aren't bound to a project).
-    const projectId = (req as AuthedRequest).projectId ?? undefined;
-    const cacheKey = `${RERANK_CACHE_PREFIX}${projectId ?? "_"}:${JSON.stringify(query)}`;
+  const query = parsed.data;
+  // Org history is per-project, so scope the cache by projectId too (null for
+  // dashboard/Clerk reads that aren't bound to a project).
+  const projectId = (req as AuthedRequest).projectId ?? undefined;
+  const cacheKey = `${RERANK_CACHE_PREFIX}${projectId ?? "_"}:${JSON.stringify(query)}`;
 
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      res.json(JSON.parse(cached));
-      return;
-    }
+  const cached = await redis.get(cacheKey);
+  if (cached) {
+    res.json(JSON.parse(cached));
+    return;
+  }
 
-    const result = await rerankCandidates(query, { projectId });
+  const result = await rerankCandidates(query, { projectId });
 
-    await redis.setex(cacheKey, RERANK_CACHE_TTL_S, JSON.stringify(result));
-    res.json(result);
-  },
-);
+  await redis.setex(cacheKey, RERANK_CACHE_TTL_S, JSON.stringify(result));
+  res.json(result);
+});
 
 export default router;

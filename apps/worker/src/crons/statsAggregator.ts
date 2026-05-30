@@ -1,9 +1,6 @@
 import type { Drizzle } from "../types.js";
 import { sql } from "drizzle-orm";
-import {
-  computeReliabilityScore,
-  gradeBand,
-} from "../lib/reliabilityScore.js";
+import { computeReliabilityScore, gradeBand } from "../lib/reliabilityScore.js";
 import { detectRegressions, type ToolSnapshot } from "../lib/regressionDetect.js";
 import { deliverSignedWebhooks } from "../lib/signedWebhookDelivery.js";
 
