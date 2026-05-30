@@ -236,15 +236,25 @@ export async function rerankCandidates(
     .map((c) => ("slug" in c ? c.slug.toLowerCase().trim() : null))
     .filter((s): s is string => s !== null);
 
+  // Name-only candidates (no slug) — resolved by a targeted lower(name) match,
+  // never a full-catalog scan (this runs on the agent's runtime path).
+  const requestedNames = candidates
+    .map((c) => (!("slug" in c) ? c.name.toLowerCase().trim() : null))
+    .filter((s): s is string => s !== null);
+
   const rows =
     requestedSlugs.length > 0
       ? await runCandidateQuery([inArray(tools.slug, requestedSlugs)])
       : [];
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
 
-  // Catalog by name (lowercased) for fuzzy resolution of name-only candidates.
-  const allRows = requestedSlugs.length < candidates.length ? await runCandidateQuery([]) : rows;
-  const byName = new Map(allRows.map((r) => [r.name.toLowerCase().trim(), r]));
+  const nameRows =
+    requestedNames.length > 0
+      ? await runCandidateQuery([sql`lower(${tools.name}) = ANY(${requestedNames})`])
+      : [];
+  const byName = new Map(
+    [...rows, ...nameRows].map((r) => [r.name.toLowerCase().trim(), r]),
+  );
 
   // ── 2. Resolve + score, preserving the input order for unscored pass-through ─
   const orgHistory = opts.projectId

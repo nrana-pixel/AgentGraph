@@ -1,9 +1,9 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { tools, toolGlobalStats, toolGlobalStatsHistory } from "../db/schema.js";
-import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
-import { clerkSessionAuth } from "../middleware/clerkSessionAuth.js";
+import { type AuthedRequest } from "../middleware/apiKeyAuth.js";
+import { flexAuth } from "../middleware/flexAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
 import {
   RecommendQuerySchema,
@@ -13,6 +13,7 @@ import {
 } from "@agentgraph/types";
 import {
   detectRegressions,
+  median,
   type ToolSnapshot,
 } from "../lib/regressionDetect.js";
 import { getRecommendations } from "../services/recommendationEngine.js";
@@ -48,18 +49,6 @@ function safeJson(raw: string): Record<string, number> {
   } catch {
     return {};
   }
-}
-
-/**
- * Flexible auth for dashboard + SDK reads.
- * ag_* tokens → apiKeyAuth (SDK runtime); anything else → clerkSessionAuth (dashboard).
- */
-async function flexAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const bearer = req.headers["authorization"]?.slice(7) ?? "";
-  if (bearer.startsWith("ag_")) {
-    return apiKeyAuth(req, res, next);
-  }
-  return clerkSessionAuth(req, res, next);
 }
 
 // GET /v1/tools/recommend — runtime tool recommendations (SDK + dashboard)
@@ -300,19 +289,12 @@ router.get(
           current: r.current,
           baseline: r.baseline,
         };
-      } else if (
-        baseline.length > 0 &&
-        cur.successRate !== null &&
-        sparkline.length >= 2 &&
-        (() => {
-          const prev = baseline
-            .map((b) => b.successRate)
-            .filter((v): v is number => v !== null);
-          const med = prev.length ? prev.reduce((a, b) => a + b, 0) / prev.length : null;
-          return med !== null && cur.successRate! < med; // any drop below baseline, sub-threshold
-        })()
-      ) {
-        status = "degraded";
+      } else if (baseline.length > 0 && cur.successRate !== null) {
+        // "degraded" = below the trailing baseline but under the alert
+        // threshold. Use the SAME median detectRegressions uses, so health
+        // status and alerting never disagree on the same baseline.
+        const med = median(baseline.map((b) => b.successRate));
+        if (med !== null && cur.successRate < med) status = "degraded";
       }
     }
 

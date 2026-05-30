@@ -36,7 +36,7 @@ export interface Regression {
   baseline: RegressionMetrics;
 }
 
-function median(values: Array<number | null | undefined>): number | null {
+export function median(values: Array<number | null | undefined>): number | null {
   const nums = values.filter(
     (v): v is number => typeof v === "number" && Number.isFinite(v),
   );
