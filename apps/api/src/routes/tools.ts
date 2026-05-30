@@ -268,6 +268,8 @@ router.get(
       date: String(h.date),
       successRate: num(h.successRate),
       p95LatencyMs: num(h.p95LatencyMs),
+      costPerCallUsd: num(h.costPerCallUsd),
+      totalCalls: num(h.totalCalls),
     }));
 
     // Current = newest snapshot; baseline = the trailing 7 before it.
@@ -293,17 +295,10 @@ router.get(
       if (regressions.length > 0) {
         status = "regressed";
         const r = regressions[0]!;
-        const pick = (m: typeof r.current): number | null =>
-          r.kind === "latency"
-            ? m.p95LatencyMs
-            : r.kind === "cost"
-              ? m.costPerCallUsd
-              : m.successRate;
         lastRegression = {
           kind: r.kind,
-          detectedAt: new Date().toISOString(),
-          current: pick(r.current),
-          baseline: pick(r.baseline),
+          current: r.current,
+          baseline: r.baseline,
         };
       } else if (
         baseline.length > 0 &&
