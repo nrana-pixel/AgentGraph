@@ -3,6 +3,8 @@ import type {
   IngestResponse,
   DiscoverQuery,
   DiscoverResponse,
+  RerankQuery,
+  RerankResponse,
 } from "@agentgraph/types";
 import type { RedactOptions } from "./redact.js";
 
@@ -100,4 +102,39 @@ export async function sendDiscover(
   }
 
   return res.json() as Promise<DiscoverResponse>;
+}
+
+/** Options for {@link sendRerank} — everything except the required `task` + `candidates`. */
+export type RerankOptions = Partial<Omit<RerankQuery, "task" | "candidates">>;
+
+/**
+ * Rerank a candidate tool list (e.g. from Anthropic Tool Search or a vector
+ * index) by AgentGraph's real-world reliability signal. Returns the same ranked
+ * tools with their schemas. Same error semantics as {@link sendIngest}.
+ */
+export async function sendRerank(
+  config: AgentGraphConfig,
+  task: string,
+  candidates: RerankQuery["candidates"],
+  options: RerankOptions = {},
+): Promise<RerankResponse> {
+  const base = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const url = `${base}/v1/rerank`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({ task, candidates, ...options }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status >= 500) throw new IngestServerError(res.status, text);
+    throw new IngestClientError(res.status, text);
+  }
+
+  return res.json() as Promise<RerankResponse>;
 }

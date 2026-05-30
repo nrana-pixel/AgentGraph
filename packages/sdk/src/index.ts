@@ -1,18 +1,27 @@
 import {
   sendIngest,
   sendDiscover,
+  sendRerank,
   IngestClientError,
   type AgentGraphConfig,
   type DiscoverOptions,
+  type RerankOptions,
 } from "./client.js";
 import { Trace, type TraceOptions } from "./trace.js";
 import { applyRedaction } from "./redact.js";
-import type { IngestPayload, TraceStepInput, DiscoverResponse } from "@agentgraph/types";
+import type {
+  IngestPayload,
+  TraceStepInput,
+  DiscoverResponse,
+  RerankQuery,
+  RerankResponse,
+} from "@agentgraph/types";
 
 export { Span } from "./span.js";
 export { Trace, type TraceOptions } from "./trace.js";
 export type { AgentGraphConfig } from "./client.js";
 export type { DiscoverOptions } from "./client.js";
+export type { RerankOptions } from "./client.js";
 export { IngestClientError, IngestServerError } from "./client.js";
 export type { RedactOptions } from "./redact.js";
 
@@ -62,6 +71,35 @@ export class AgentGraph {
     for (let attempt = 1; ; attempt++) {
       try {
         return await sendDiscover(this.config, task, options);
+      } catch (err) {
+        if (err instanceof IngestClientError) throw err; // 4xx — do not retry
+        if (attempt >= maxRetries) throw err;
+        await sleep(baseDelay * 2 ** (attempt - 1));
+      }
+    }
+  }
+
+  /**
+   * Rerank a candidate tool list (from Anthropic Tool Search, a vector index,
+   * …) by AgentGraph's real-world reliability signal. We are the quality layer
+   * above retrieval — pass the candidates an upstream retriever already picked
+   * and get them reordered by reliability before the agent chooses.
+   *
+   * Same retry semantics as {@link discover}: retries transient failures with
+   * exponential backoff, never queues (a ranking is only useful in the moment),
+   * and surfaces 4xx immediately.
+   */
+  async rerank(
+    task: string,
+    candidates: RerankQuery["candidates"],
+    options: RerankOptions = {},
+  ): Promise<RerankResponse> {
+    const maxRetries = this.config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    const baseDelay = this.config.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await sendRerank(this.config, task, candidates, options);
       } catch (err) {
         if (err instanceof IngestClientError) throw err; // 4xx — do not retry
         if (attempt >= maxRetries) throw err;

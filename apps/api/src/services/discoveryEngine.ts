@@ -15,6 +15,9 @@ import type {
   DiscoverQuery,
   DiscoverResponse,
   DiscoveredTool,
+  GradeBand,
+  RerankQuery,
+  RerankResponse,
 } from "@agentgraph/types";
 
 const COLD_START_THRESHOLD = 50;
@@ -45,6 +48,8 @@ interface CandidateRow {
   avgLatencyMs: string | null;
   p95LatencyMs: string | null;
   popularityScore: string | null;
+  reliabilityScore: string | null;
+  gradeBand: string | null;
   lastUpdated: Date | null;
 }
 
@@ -54,6 +59,8 @@ const CANDIDATE_COLUMNS = {
   outputSchema: tools.outputSchema,
   embedding: tools.embedding,
   ...toolGlobalStatColumns,
+  reliabilityScore: toolGlobalStats.reliabilityScore,
+  gradeBand: toolGlobalStats.gradeBand,
 } as const;
 
 export async function discoverTools(
@@ -137,7 +144,41 @@ export async function discoverTools(
 
   const available = new Set((availableTools ?? []).map((s) => s.toLowerCase().trim()));
 
-  const result: DiscoveredTool[] = top.map(({ c, score, isColdStart, scores }) => ({
+  const result: DiscoveredTool[] = top.map(({ c, score, isColdStart, scores }) =>
+    toDiscoveredTool(c, {
+      score,
+      isColdStart,
+      scores,
+      reason: generateReason(c, scores, isColdStart),
+      availableToCaller: available.has(c.slug),
+    }),
+  );
+
+  return { task, tools: result, dataFreshness };
+}
+
+interface ScoreParts {
+  taskRelevance: number;
+  schemaFit: number | null;
+  reliability: number;
+  orgHistory: number | null;
+  latency: number;
+}
+
+/** Map a scored catalog row to the wire `DiscoveredTool`. Shared by discover
+ *  and rerank so the response shape never drifts between the two paths. */
+function toDiscoveredTool(
+  c: CandidateRow,
+  opts: {
+    score: number;
+    isColdStart: boolean;
+    scores: ScoreParts;
+    reason: string;
+    availableToCaller: boolean;
+  },
+): DiscoveredTool {
+  const { score, isColdStart, scores, reason, availableToCaller } = opts;
+  return {
     slug: c.slug,
     name: c.name,
     category: c.category as DiscoveredTool["category"],
@@ -149,7 +190,7 @@ export async function discoverTools(
       orgHistory: scores.orgHistory !== null ? round1(scores.orgHistory) : null,
       latency: round1(scores.latency),
     },
-    reason: generateReason(c, scores, isColdStart),
+    reason,
     inputSchema: c.inputSchema,
     outputSchema: c.outputSchema,
     successRate: c.successRate !== null ? parseFloat(c.successRate) : null,
@@ -163,10 +204,190 @@ export async function discoverTools(
     dataSource: (isColdStart ? "seeded" : c.dataSource) as DiscoveredTool["dataSource"],
     website: c.website,
     docsUrl: c.docsUrl,
-    availableToCaller: available.has(c.slug),
-  }));
+    availableToCaller,
+    reliabilityScore: c.reliabilityScore !== null ? parseFloat(c.reliabilityScore) : null,
+    gradeBand: (c.gradeBand as GradeBand | null) ?? null,
+  };
+}
 
-  return { task, tools: result, dataFreshness };
+// ---------------------------------------------------------------------------
+// Rerank — Mode A: rank an externally-retrieved candidate list (spec 04)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rerank a candidate list that some upstream retriever (Anthropic Tool Search,
+ * a vector index, …) already selected. We are the *quality* layer: retrieval
+ * relevance is taken as a given, so scoring is biased toward intrinsic signals
+ * (reliability, latency, org-history) via {@link computeRerankScore}.
+ *
+ * Candidates are resolved against the catalog by slug, falling back to a fuzzy
+ * name match. Anything we can't resolve — or that has no telemetry — is NOT
+ * dropped: it passes through with `reliabilityScore: null` and ranks *after*
+ * every scored tool, so the agent still sees it.
+ */
+export async function rerankCandidates(
+  query: RerankQuery,
+  opts: { projectId?: string } = {},
+): Promise<RerankResponse> {
+  const { task, candidates, availableTools, limit } = query;
+
+  // ── 1. Resolve candidates against the catalog ──────────────────────────────
+  const requestedSlugs = candidates
+    .map((c) => ("slug" in c ? c.slug.toLowerCase().trim() : null))
+    .filter((s): s is string => s !== null);
+
+  const rows =
+    requestedSlugs.length > 0
+      ? await runCandidateQuery([inArray(tools.slug, requestedSlugs)])
+      : [];
+  const bySlug = new Map(rows.map((r) => [r.slug, r]));
+
+  // Catalog by name (lowercased) for fuzzy resolution of name-only candidates.
+  const allRows = requestedSlugs.length < candidates.length ? await runCandidateQuery([]) : rows;
+  const byName = new Map(allRows.map((r) => [r.name.toLowerCase().trim(), r]));
+
+  // ── 2. Resolve + score, preserving the input order for unscored pass-through ─
+  const orgHistory = opts.projectId
+    ? await loadOrgHistory(opts.projectId, rows.map((r) => r.slug))
+    : new Map<string, number | null>();
+
+  const p95Values = rows
+    .filter((r) => r.p95LatencyMs !== null)
+    .map((r) => parseFloat(r.p95LatencyMs!));
+  const p95Median = median(p95Values) || 1000;
+
+  const available = new Set((availableTools ?? []).map((s) => s.toLowerCase().trim()));
+
+  const scored: Array<{ tool: DiscoveredTool; score: number; resolved: boolean }> = [];
+
+  for (const cand of candidates) {
+    const row = resolveCandidate(cand, bySlug, byName);
+
+    // Unresolved → synthesize a minimal pass-through tool (never dropped).
+    if (!row) {
+      scored.push({ tool: passthroughTool(cand, available), score: -1, resolved: false });
+      continue;
+    }
+
+    const isColdStart = (row.totalCalls ?? 0) < COLD_START_THRESHOLD;
+    const taskRelevance = computeTaskRelevance(row, null, task);
+    const reliability = computeReliability(row);
+    const latency = computeLatencyScore(row.p95LatencyMs, p95Median);
+    const orgHist = orgHistory.get(row.slug) ?? null;
+    const scores: ScoreParts = {
+      taskRelevance,
+      schemaFit: null,
+      reliability,
+      orgHistory: orgHist,
+      latency,
+    };
+    const score = computeRerankScore({ reliability, latency, orgHistory: orgHist, taskRelevance, isColdStart });
+
+    scored.push({
+      tool: toDiscoveredTool(row, {
+        score,
+        isColdStart,
+        scores,
+        reason: generateReason(row, scores, isColdStart),
+        availableToCaller: available.has(row.slug),
+      }),
+      score,
+      resolved: true,
+    });
+  }
+
+  // ── 3. Scored tools first (by score desc), then unresolved in input order ────
+  const resolved = scored.filter((s) => s.resolved).sort((a, b) => b.score - a.score);
+  const unresolved = scored.filter((s) => !s.resolved);
+  const ranked = [...resolved, ...unresolved].map((s) => s.tool);
+
+  return { task, ranked: limit ? ranked.slice(0, limit) : ranked };
+}
+
+/** Resolve one candidate to a catalog row: slug first, then exact-name. */
+function resolveCandidate(
+  cand: RerankQuery["candidates"][number],
+  bySlug: Map<string, CandidateRow>,
+  byName: Map<string, CandidateRow>,
+): CandidateRow | null {
+  if ("slug" in cand) {
+    return bySlug.get(cand.slug.toLowerCase().trim()) ?? null;
+  }
+  return byName.get(cand.name.toLowerCase().trim()) ?? null;
+}
+
+/** A candidate the catalog doesn't know — surfaced with null intrinsic signals
+ *  so the agent still sees it, but it sorts after everything we can score. */
+function passthroughTool(
+  cand: RerankQuery["candidates"][number],
+  available: Set<string>,
+): DiscoveredTool {
+  const slug = "slug" in cand ? cand.slug.toLowerCase().trim() : slugify(cand.name);
+  const name = "slug" in cand ? cand.slug : cand.name;
+  return {
+    slug,
+    name,
+    category: "other",
+    score: 0,
+    scores: { taskRelevance: 0, schemaFit: null, reliability: 0, orgHistory: null, latency: 0 },
+    reason: "Unknown to the catalog — no reliability data yet; passed through unranked.",
+    inputSchema: null,
+    outputSchema: null,
+    successRate: null,
+    p95LatencyMs: null,
+    popularityScore: null,
+    sentimentScore: null,
+    isOpenSource: false,
+    isSelfHostable: false,
+    pricingModel: null,
+    dataResidency: [],
+    dataSource: "community",
+    website: null,
+    docsUrl: null,
+    availableToCaller: available.has(slug),
+    reliabilityScore: null,
+    gradeBand: null,
+  };
+}
+
+function slugify(s: string): string {
+  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Reliability signal for rerank: prefer the published Reliability Score (spec
+ *  01) when present, else fall back to raw success-rate, else neutral 80. */
+function computeReliability(c: CandidateRow): number {
+  if (c.reliabilityScore !== null) return clamp(parseFloat(c.reliabilityScore), 0, 100);
+  if (c.successRate !== null) return clamp(parseFloat(c.successRate) * 100, 0, 100);
+  return 80;
+}
+
+export interface RerankScoreInput {
+  reliability: number; // 0–100
+  latency: number; // 0–100
+  orgHistory: number | null; // 0–100 or null
+  taskRelevance: number; // 0–100
+  isColdStart: boolean;
+}
+
+/**
+ * Rerank weighting profile. Retrieval already decided relevance upstream, so we
+ * bias toward *intrinsic* quality: reliability 55% · latency 20% · org-history
+ * 15% · a small task-relevance tiebreak 10%. orgHistory is dropped + its weight
+ * redistributed when null (neutral, never a penalty). Cold-start tools are
+ * capped so thin data can't out-rank a proven tool.
+ */
+export function computeRerankScore(i: RerankScoreInput): number {
+  const parts: Array<{ v: number; w: number }> = [
+    { v: i.reliability, w: 0.55 },
+    { v: i.latency, w: 0.2 },
+    { v: i.taskRelevance, w: 0.1 },
+  ];
+  if (i.orgHistory !== null) parts.push({ v: i.orgHistory, w: 0.15 });
+
+  const totalW = parts.reduce((s, p) => s + p.w, 0);
+  const raw = parts.reduce((s, p) => s + p.v * p.w, 0) / totalW;
+  return i.isColdStart ? Math.min(raw, COLD_START_SCORE_CAP) : raw;
 }
 
 // ---------------------------------------------------------------------------
