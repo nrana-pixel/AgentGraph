@@ -2,6 +2,8 @@ import { sql } from "drizzle-orm";
 import type { Drizzle } from "../types.js";
 import { tools } from "../db/schema.js";
 import { embedTexts, embeddingsEnabled, toolEmbeddingText } from "../lib/embeddings.js";
+import { computeDefinitionHash } from "../lib/definitionHash.js";
+import { scoreToolDescription } from "../lib/toolDescriptionQuality.js";
 
 /**
  * Catalog sync — seeds/refreshes the tool catalog from the public MCP registry
@@ -176,11 +178,29 @@ export async function runMcpCatalogSync(db: Drizzle): Promise<void> {
   const embeddings = embeddingsEnabled()
     ? await embedTexts(normalized.map((t) => toolEmbeddingText(t.name, t.description, t.tags)))
     : [];
+
+  // Same-category name cohorts for the inline quality scorer (name_collision).
+  const namesByCategory = new Map<string, string[]>();
+  for (const t of normalized) {
+    const list = namesByCategory.get(t.category) ?? [];
+    list.push(t.name);
+    namesByCategory.set(t.category, list);
+  }
+
   let upserted = 0;
 
   for (let i = 0; i < normalized.length; i++) {
     const t = normalized[i]!;
     const embedding = embeddings[i] ?? null;
+    const definitionHash = computeDefinitionHash(t.name, t.description, t.inputSchema);
+    // Score freshly-crawled tools immediately so they surface a quality signal
+    // on day one, before the daily quality-scan cron runs.
+    const { score, issues } = scoreToolDescription(
+      { name: t.name, description: t.description, inputSchema: t.inputSchema },
+      namesByCategory.get(t.category) ?? [],
+    );
+    const qualityIssues = JSON.stringify(issues);
+    const qualityCheckedAt = new Date();
 
     await db
       .insert(tools)
@@ -196,6 +216,10 @@ export async function runMcpCatalogSync(db: Drizzle): Promise<void> {
         tags: t.tags.length > 0 ? t.tags : null,
         embedding: embedding ? JSON.stringify(embedding) : null,
         dataSource: "seeded",
+        definitionHash,
+        descriptionQualityScore: score,
+        qualityIssues,
+        qualityCheckedAt,
       })
       // Refresh catalog metadata, but ONLY for still-seeded tools — never
       // clobber a tool that has graduated to telemetry-derived data.
@@ -208,6 +232,10 @@ export async function runMcpCatalogSync(db: Drizzle): Promise<void> {
           inputSchema: t.inputSchema,
           outputSchema: t.outputSchema,
           ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
+          definitionHash,
+          descriptionQualityScore: score,
+          qualityIssues,
+          qualityCheckedAt,
           updatedAt: new Date(),
         },
         setWhere: sql`${tools.dataSource} = 'seeded'`,

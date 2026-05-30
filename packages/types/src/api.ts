@@ -78,6 +78,7 @@ export const WebhookEventSchema = z.enum([
   "error_rate_threshold",
   "trace_completed",
   "daily_digest",
+  "tool_regression",
 ]);
 export type WebhookEvent = z.infer<typeof WebhookEventSchema>;
 

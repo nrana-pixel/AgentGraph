@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { IngestPayloadSchema } from "@agentgraph/types";
 import type { Drizzle } from "../types.js";
 import { computeCost } from "../lib/modelCosts.js";
+import { computeDefinitionHash } from "../lib/definitionHash.js";
 import { deliverSignedWebhooks } from "../lib/signedWebhookDelivery.js";
 import { exportTraceToOtlp } from "../lib/otlpExport.js";
 import { traces, traceSteps, tools, projects } from "../db/schema.js";
@@ -167,13 +168,17 @@ export async function startIngestConsumer(
         ];
 
         for (const toolSlug of toolNames) {
+          const name = toTitleCase(toolSlug);
           await tx
             .insert(tools)
             .values({
               slug: toolSlug,
-              name: toTitleCase(toolSlug),
+              name,
               category: "other",
               dataSource: "telemetry",
+              // Auto-discovered tools carry only a name; description/schema are
+              // unknown until catalog sync, so the hash fingerprints the name.
+              definitionHash: computeDefinitionHash(name, null, null),
             })
             .onConflictDoNothing();
         }
