@@ -224,6 +224,114 @@ router.get(
   },
 );
 
+// GET /v1/tools/:slug/health — "Downdetector" status + 30d sparkline (spec 02)
+router.get(
+  "/:slug/health",
+  rateLimiter,
+  flexAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    const { slug } = req.params as { slug: string };
+
+    const [tool] = await db
+      .select({ slug: tools.slug, name: tools.name })
+      .from(tools)
+      .where(eq(tools.slug, slug));
+    if (!tool) {
+      res.status(404).json({ error: "tool_not_found" });
+      return;
+    }
+
+    const num = (v: unknown): number | null =>
+      v === null || v === undefined ? null : Number(v);
+
+    // Last 30 days of history, newest first, for the sparkline + baseline.
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
+    const history = await db
+      .select({
+        date: toolGlobalStatsHistory.date,
+        successRate: toolGlobalStatsHistory.successRate,
+        p95LatencyMs: toolGlobalStatsHistory.p95LatencyMs,
+        costPerCallUsd: toolGlobalStatsHistory.costPerCallUsd,
+        totalCalls: toolGlobalStatsHistory.totalCalls,
+      })
+      .from(toolGlobalStatsHistory)
+      .where(
+        and(
+          eq(toolGlobalStatsHistory.toolSlug, slug),
+          gte(toolGlobalStatsHistory.date, thirtyDaysAgo.toISOString().slice(0, 10)),
+        ),
+      )
+      .orderBy(desc(toolGlobalStatsHistory.date));
+
+    const sparkline = [...history].reverse().map((h) => ({
+      date: String(h.date),
+      successRate: num(h.successRate),
+      p95LatencyMs: num(h.p95LatencyMs),
+    }));
+
+    // Current = newest snapshot; baseline = the trailing 7 before it.
+    const [current, ...rest] = history;
+    let status: ToolHealthResponse["status"] = "healthy";
+    let lastRegression: ToolHealthResponse["lastRegression"] = null;
+
+    if (current) {
+      const cur: ToolSnapshot = {
+        successRate: num(current.successRate),
+        p95LatencyMs: num(current.p95LatencyMs),
+        costPerCallUsd: num(current.costPerCallUsd),
+        totalCalls: num(current.totalCalls),
+      };
+      const baseline: ToolSnapshot[] = rest.slice(0, 7).map((h) => ({
+        successRate: num(h.successRate),
+        p95LatencyMs: num(h.p95LatencyMs),
+        costPerCallUsd: num(h.costPerCallUsd),
+        totalCalls: num(h.totalCalls),
+      }));
+
+      const regressions = detectRegressions(cur, baseline);
+      if (regressions.length > 0) {
+        status = "regressed";
+        const r = regressions[0]!;
+        const pick = (m: typeof r.current): number | null =>
+          r.kind === "latency"
+            ? m.p95LatencyMs
+            : r.kind === "cost"
+              ? m.costPerCallUsd
+              : m.successRate;
+        lastRegression = {
+          kind: r.kind,
+          detectedAt: new Date().toISOString(),
+          current: pick(r.current),
+          baseline: pick(r.baseline),
+        };
+      } else if (
+        baseline.length > 0 &&
+        cur.successRate !== null &&
+        sparkline.length >= 2 &&
+        (() => {
+          const prev = baseline
+            .map((b) => b.successRate)
+            .filter((v): v is number => v !== null);
+          const med = prev.length ? prev.reduce((a, b) => a + b, 0) / prev.length : null;
+          return med !== null && cur.successRate! < med; // any drop below baseline, sub-threshold
+        })()
+      ) {
+        status = "degraded";
+      }
+    }
+
+    const response: ToolHealthResponse = {
+      slug: tool.slug,
+      name: tool.name,
+      status,
+      lastRegression,
+      sparkline,
+    };
+    res.json(response);
+  },
+);
+
 // GET /v1/tools/:slug — tool profile + global stats (dashboard + SDK)
 router.get(
   "/:slug",

@@ -83,14 +83,16 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-/** Tokenise a tool name into lowercased word/identifier tokens. */
+/** Tokenise a tool name into ordered, lowercased word/identifier tokens. */
+function nameTokenList(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 0);
+}
+
 function nameTokens(name: string): Set<string> {
-  return new Set(
-    name
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length > 0),
-  );
+  return new Set(nameTokenList(name));
 }
 
 /** Jaccard-ish token overlap: |intersection| / |smaller set|. */
@@ -99,6 +101,27 @@ function tokenOverlap(a: Set<string>, b: Set<string>): number {
   let shared = 0;
   for (const t of a) if (b.has(t)) shared++;
   return shared / Math.min(a.size, b.size);
+}
+
+/**
+ * Two names collide when they overlap heavily OR they are verb-prefix
+ * near-duplicates: same arity, identical except the leading (verb) token —
+ * e.g. get_status / fetch_status / query_status. The latter is the exact
+ * "models misfire on partial matches" pattern from the spec, which raw token
+ * overlap (0.5 for a 2-token name) misses.
+ */
+function namesCollide(aName: string, bName: string): boolean {
+  if (tokenOverlap(nameTokens(aName), nameTokens(bName)) >= NAME_COLLISION_THRESHOLD) {
+    return true;
+  }
+  const a = nameTokenList(aName);
+  const b = nameTokenList(bName);
+  return (
+    a.length === b.length &&
+    a.length >= 2 &&
+    a[0] !== b[0] &&
+    a.slice(1).join(" ") === b.slice(1).join(" ")
+  );
 }
 
 function parseSchema(raw: string | null): Record<string, unknown> | null {
@@ -172,11 +195,10 @@ export function scoreToolDescription(
   }
 
   // --- Name collision within category -----------------------------------
-  const myTokens = nameTokens(tool.name);
   if (
     sameCategoryNames.some((other) => {
       if (other.toLowerCase() === tool.name.toLowerCase()) return false;
-      return tokenOverlap(myTokens, nameTokens(other)) >= NAME_COLLISION_THRESHOLD;
+      return namesCollide(tool.name, other);
     })
   ) {
     issues.push("name_collision");
