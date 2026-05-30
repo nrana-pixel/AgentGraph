@@ -57,6 +57,13 @@
       "when": 1780076069802,
       "tag": "0007_tool_reliability_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780163306281,
+      "tag": "0008_prod_hardening_indexes",
+      "breakpoints": true
     }
   ]
 }

@@ -31,10 +31,7 @@ async function deadLetter(redis: Redis, raw: string, reason: string): Promise<vo
   }
 }
 
-export async function startIngestConsumer(
-  redisUrl: string,
-  databaseUrl: string,
-): Promise<void> {
+export async function startIngestConsumer(redisUrl: string, databaseUrl: string): Promise<void> {
   const pgClient = postgres(databaseUrl);
   const db = drizzle(pgClient);
   const redis = new Redis(redisUrl);
@@ -59,7 +56,9 @@ export async function startIngestConsumer(
     // raw payload BEFORE schema validation, because IngestPayloadSchema does
     // not declare projectId (the SDK never sends one) and Zod will strip it.
     const projectId =
-      typeof rawJson === "object" && rawJson !== null && typeof (rawJson as { projectId?: unknown }).projectId === "string"
+      typeof rawJson === "object" &&
+      rawJson !== null &&
+      typeof (rawJson as { projectId?: unknown }).projectId === "string"
         ? (rawJson as { projectId: string }).projectId
         : null;
     if (!projectId) {
@@ -96,12 +95,7 @@ export async function startIngestConsumer(
 
           // Use SDK-provided cost if present, otherwise compute from model pricing
           let costUsd = step.costUsd ?? null;
-          if (
-            costUsd === null &&
-            step.model &&
-            step.type === "llm_call" &&
-            totalTokens > 0
-          ) {
+          if (costUsd === null && step.model && step.type === "llm_call" && totalTokens > 0) {
             costUsd = computeCost(step.model, promptTokens, completionTokens);
           }
 
@@ -121,7 +115,7 @@ export async function startIngestConsumer(
             promptTokens: promptTokens || null,
             completionTokens: completionTokens || null,
             totalTokens: totalTokens || null,
-            costUsd: costUsd?.toFixed(8) ?? null,
+            costUsd: costUsd?.toFixed(6) ?? null,
             error: step.error ?? null,
             model: step.model ?? null,
             toolName: step.toolName ?? null,
@@ -137,23 +131,41 @@ export async function startIngestConsumer(
         const finalTokens =
           payload.totalTokens ?? (totalComputedTokens > 0 ? totalComputedTokens : null);
 
-        // ── 2. Upsert trace ───────────────────────────────────────────────────────
-        await tx.insert(traces).values({
-          id: traceId,
-          projectId: payload.projectId,
-          agentId: payload.agentId,
-          sessionId: payload.sessionId ?? null,
-          userId: payload.userId ?? null,
-          env: payload.env,
-          status: payload.status,
-          totalLatencyMs: payload.totalLatencyMs ?? null,
-          totalTokens: finalTokens,
-          totalCostUsd: finalCostUsd?.toFixed(8) ?? null,
-          metadata: JSON.stringify(payload.metadata ?? {}),
-          endedAt: payload.status !== "running" ? new Date() : null,
-        });
+        // ── 2. Upsert trace (idempotent: the SDK is at-least-once, so a resent
+        //       traceId must update in place, not throw a PK violation that
+        //       dead-letters a perfectly valid retry). ───────────────────────
+        await tx
+          .insert(traces)
+          .values({
+            id: traceId,
+            projectId: payload.projectId,
+            agentId: payload.agentId,
+            sessionId: payload.sessionId ?? null,
+            userId: payload.userId ?? null,
+            env: payload.env,
+            status: payload.status,
+            totalLatencyMs: payload.totalLatencyMs ?? null,
+            totalTokens: finalTokens,
+            totalCostUsd: finalCostUsd?.toFixed(6) ?? null,
+            metadata: JSON.stringify(payload.metadata ?? {}),
+            endedAt: payload.status !== "running" ? new Date() : null,
+          })
+          .onConflictDoUpdate({
+            target: traces.id,
+            set: {
+              status: payload.status,
+              totalLatencyMs: payload.totalLatencyMs ?? null,
+              totalTokens: finalTokens,
+              totalCostUsd: finalCostUsd?.toFixed(6) ?? null,
+              metadata: JSON.stringify(payload.metadata ?? {}),
+              endedAt: payload.status !== "running" ? new Date() : null,
+            },
+          });
 
-        // ── 3. Insert trace steps ─────────────────────────────────────────────────
+        // ── 3. Insert trace steps. Delete-then-insert so a resend replaces the
+        //       prior steps instead of duplicating them (step ids may be
+        //       server-generated, so onConflict alone can't dedupe a retry). ──
+        await tx.delete(traceSteps).where(eq(traceSteps.traceId, traceId));
         if (enrichedSteps.length > 0) {
           await tx.insert(traceSteps).values(enrichedSteps);
         }
@@ -198,8 +210,7 @@ export async function startIngestConsumer(
         .where(eq(projects.id, payload.projectId));
 
       if (committedCostUsd !== null) {
-        const parsedThreshold =
-          project?.threshold != null ? Number(project.threshold) : NaN;
+        const parsedThreshold = project?.threshold != null ? Number(project.threshold) : NaN;
         const threshold = Number.isFinite(parsedThreshold)
           ? parsedThreshold
           : COST_SPIKE_THRESHOLD_USD;
@@ -227,13 +238,17 @@ export async function startIngestConsumer(
       }
     } catch (err) {
       console.error("[ingest-consumer] db transaction failed:", err);
-      await deadLetter(redis, raw, `db_transaction_failed: ${err instanceof Error ? err.message : String(err)}`);
+      await deadLetter(
+        redis,
+        raw,
+        `db_transaction_failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }
 
 // Fallback used when a project has no configured cost-spike threshold.
-const COST_SPIKE_THRESHOLD_USD = 1.00;
+const COST_SPIKE_THRESHOLD_USD = 1.0;
 
 async function fireCostSpikeWebhooks(
   db: Drizzle,

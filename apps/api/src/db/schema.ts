@@ -130,6 +130,9 @@ export const traces = pgTable(
     index("idx_traces_session_id").on(t.sessionId),
     index("idx_traces_status").on(t.status),
     index("idx_traces_started_at").on(t.startedAt),
+    // Trace list is scoped by project and ordered by started_at desc — a
+    // composite serves the filter + sort in one index.
+    index("idx_traces_project_started").on(t.projectId, t.startedAt),
   ],
 );
 
@@ -163,6 +166,9 @@ export const traceSteps = pgTable(
     index("idx_trace_steps_trace_id").on(t.traceId),
     index("idx_trace_steps_tool_name").on(t.toolName),
     index("idx_trace_steps_type").on(t.type),
+    // The nightly aggregator + lazy usage rollup filter trace_steps by a
+    // timestamp range; without this they seq-scan the whole table.
+    index("idx_trace_steps_timestamp").on(t.timestamp),
   ],
 );
 
@@ -235,14 +241,12 @@ export const toolStats = pgTable(
     errorCount: integer("error_count").default(0).notNull(),
     avgLatencyMs: numeric("avg_latency_ms", { precision: 10, scale: 2 }),
     p95LatencyMs: numeric("p95_latency_ms", { precision: 10, scale: 2 }),
-    totalCostUsd: numeric("total_cost_usd", { precision: 10, scale: 4 }),
+    // Wide enough to hold a high-volume tool's daily rolled-up spend without
+    // overflowing (precision 10/scale 4 capped at ~$1M/tool/day/project).
+    totalCostUsd: numeric("total_cost_usd", { precision: 16, scale: 6 }),
   },
   (t) => [
-    uniqueIndex("uq_tool_stats_slug_project_date").on(
-      t.toolSlug,
-      t.projectId,
-      t.date,
-    ),
+    uniqueIndex("uq_tool_stats_slug_project_date").on(t.toolSlug, t.projectId, t.date),
     index("idx_tool_stats_tool_slug").on(t.toolSlug),
     index("idx_tool_stats_project").on(t.projectId),
     index("idx_tool_stats_date").on(t.date),

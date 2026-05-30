@@ -49,7 +49,7 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
     INSERT INTO tool_stats (id, tool_slug, project_id, date, call_count, success_count, error_count, avg_latency_ms, p95_latency_ms, total_cost_usd)
     SELECT
       gen_random_uuid(),
-      ts.tool_name AS tool_slug,
+      lower(trim(ts.tool_name)) AS tool_slug,
       t.project_id,
       ${dateStr}::date AS date,
       COUNT(*) AS call_count,
@@ -62,8 +62,9 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
     JOIN traces t ON t.id = ts.trace_id
     WHERE ts.type = 'tool_call'
       AND ts.tool_name IS NOT NULL
-      AND DATE(ts.timestamp) = ${dateStr}::date
-    GROUP BY ts.tool_name, t.project_id
+      AND ts.timestamp >= ${dateStr}::date
+      AND ts.timestamp < (${dateStr}::date + INTERVAL '1 day')
+    GROUP BY lower(trim(ts.tool_name)), t.project_id
     ON CONFLICT (tool_slug, project_id, date)
     DO UPDATE SET
       call_count = EXCLUDED.call_count,
@@ -218,7 +219,7 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
   // FILTERs in one pass; null/empty errors are successes and excluded.
   const taxonomyRows = await db.execute<ErrorTaxonomyRow>(sql`
     SELECT
-      ts.tool_name AS tool_slug,
+      lower(trim(ts.tool_name)) AS tool_slug,
       COUNT(*) FILTER (WHERE ts.error ~* 'timeout|timed out|deadline|etimedout') AS timeout,
       COUNT(*) FILTER (WHERE ts.error ~* 'unauthor|forbidden|invalid.*(key|token|cred)|\\m401\\M|\\m403\\M|auth') AS auth,
       COUNT(*) FILTER (WHERE ts.error ~* 'rate.?limit|too many request|\\m429\\M|throttl') AS rate_limit,
@@ -234,7 +235,7 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
       AND ts.error IS NOT NULL AND ts.error <> ''
       AND o.share_anonymized_stats = true
       AND ts.timestamp >= (${dateStr}::date - INTERVAL '14 days')
-    GROUP BY ts.tool_name
+    GROUP BY lower(trim(ts.tool_name))
   `);
 
   const taxonomyBySlug = new Map<string, string>();
