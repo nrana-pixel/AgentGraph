@@ -5,6 +5,7 @@ const DOC_NAV = [
   { href: "/docs/quickstart", label: "Quickstart" },
   { href: "/docs/concepts", label: "Concepts" },
   { href: "/docs/auto-instrumentation", label: "Auto-instrumentation" },
+  { href: "/docs/tool-search", label: "Tool search backend" },
   { href: "/docs/api-reference", label: "API reference" },
   { href: "/docs/troubleshooting", label: "Troubleshooting" },
 ];

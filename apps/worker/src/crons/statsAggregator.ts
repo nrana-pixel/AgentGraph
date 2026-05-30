@@ -21,6 +21,17 @@ interface ReliabilityRow {
   [key: string]: unknown;
 }
 
+interface ErrorTaxonomyRow {
+  tool_slug: string;
+  timeout: number | string;
+  auth: number | string;
+  rate_limit: number | string;
+  schema: number | string;
+  server_5xx: number | string;
+  total_errors: number | string;
+  [key: string]: unknown;
+}
+
 /**
  * Daily cron — runs at 02:00 UTC.
  * Aggregates yesterday's trace_steps into tool_stats (per-project)
@@ -202,6 +213,48 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
     LEFT JOIN category_p95 cp ON cp.category = t.category
   `);
 
+  // Error taxonomy: bucket trace_steps.error strings per tool (tool_call steps,
+  // sharing orgs only) over the trailing 14 days. Classified in SQL via regex
+  // FILTERs in one pass; null/empty errors are successes and excluded.
+  const taxonomyRows = await db.execute<ErrorTaxonomyRow>(sql`
+    SELECT
+      ts.tool_name AS tool_slug,
+      COUNT(*) FILTER (WHERE ts.error ~* 'timeout|timed out|deadline|etimedout') AS timeout,
+      COUNT(*) FILTER (WHERE ts.error ~* 'unauthor|forbidden|invalid.*(key|token|cred)|\\m401\\M|\\m403\\M|auth') AS auth,
+      COUNT(*) FILTER (WHERE ts.error ~* 'rate.?limit|too many request|\\m429\\M|throttl') AS rate_limit,
+      COUNT(*) FILTER (WHERE ts.error ~* 'schema|validation|invalid.*(arg|param|input|json)|parse|\\m400\\M|\\m422\\M') AS schema,
+      COUNT(*) FILTER (WHERE ts.error ~* '\\m50[0-9]\\M|server error|bad gateway|service unavailable') AS server_5xx,
+      COUNT(*) AS total_errors
+    FROM trace_steps ts
+    JOIN traces tr ON tr.id = ts.trace_id
+    JOIN projects p ON p.id = tr.project_id
+    JOIN organizations o ON o.id = p.org_id
+    WHERE ts.type = 'tool_call'
+      AND ts.tool_name IS NOT NULL
+      AND ts.error IS NOT NULL AND ts.error <> ''
+      AND o.share_anonymized_stats = true
+      AND ts.timestamp >= (${dateStr}::date - INTERVAL '14 days')
+    GROUP BY ts.tool_name
+  `);
+
+  const taxonomyBySlug = new Map<string, string>();
+  for (const r of taxonomyRows) {
+    const timeout = Number(r.timeout) || 0;
+    const auth = Number(r.auth) || 0;
+    const rate_limit = Number(r.rate_limit) || 0;
+    const schema = Number(r.schema) || 0;
+    const server_5xx = Number(r.server_5xx) || 0;
+    const total = Number(r.total_errors) || 0;
+    // Buckets are non-exclusive regex matches; clamp "other" so the residual is
+    // never negative when an error string matches more than one pattern.
+    const classified = Math.min(total, timeout + auth + rate_limit + schema + server_5xx);
+    const other = Math.max(0, total - classified);
+    taxonomyBySlug.set(
+      r.tool_slug,
+      JSON.stringify({ timeout, auth, rate_limit, schema, "5xx": server_5xx, other }),
+    );
+  }
+
   for (const row of reliabilityRows) {
     const distinctOrgs = row.distinct_orgs ?? 0;
     const costPerCall = row.cost_per_call_usd;
@@ -221,15 +274,14 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
       band = gradeBand(reliability);
     }
 
-    // errorTaxonomy is left null for v1 — bucketing trace_steps.error strings
-    // is deferred. TODO(spec01): derive { timeout, auth, rate_limit, schema,
-    // "5xx", other } via a regex map during the per-project rollup.
+    const errorTaxonomy = taxonomyBySlug.get(row.tool_slug) ?? null;
     await db.execute(sql`
       UPDATE tool_global_stats
       SET distinct_orgs = ${distinctOrgs},
           cost_per_call_usd = ${costPerCall ?? null},
           reliability_score = ${reliability},
-          grade_band = ${band}
+          grade_band = ${band},
+          error_taxonomy = ${errorTaxonomy}
       WHERE tool_slug = ${row.tool_slug}
     `);
   }
