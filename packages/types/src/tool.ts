@@ -229,6 +229,38 @@ export const DiscoverResponseSchema = z.object({
 });
 export type DiscoverResponse = z.infer<typeof DiscoverResponseSchema>;
 
+// ---------------------------------------------------------------------------
+// Tool-search reranker — POST /v1/rerank (spec 04)
+// ---------------------------------------------------------------------------
+//
+// Mode A: an upstream retriever (Anthropic Tool Search, a vector index, …) has
+// already selected candidate tools by name/description match. We rerank them by
+// real-world reliability before the agent sees them — biased toward intrinsic
+// signals since retrieval relevance was decided upstream. Reuses DiscoveredTool
+// as the response item shape.
+export const RerankCandidateSchema = z.union([
+  z.object({ slug: z.string().min(1) }),
+  z.object({ name: z.string().min(1), description: z.string().optional() }),
+]);
+export type RerankCandidate = z.infer<typeof RerankCandidateSchema>;
+
+export const RerankQuerySchema = z.object({
+  task: z.string().min(1).max(500),
+  // The candidate tools to rerank. Resolved against the catalog by slug, with a
+  // fallback exact-name match. Unknown candidates are kept (ranked last).
+  candidates: z.array(RerankCandidateSchema).min(1).max(2000),
+  // Optional: slugs the calling agent can actually invoke (sets availableToCaller).
+  availableTools: z.array(z.string()).max(2000).optional(),
+  limit: z.number().int().min(1).max(2000).optional(),
+});
+export type RerankQuery = z.infer<typeof RerankQuerySchema>;
+
+export const RerankResponseSchema = z.object({
+  task: z.string(),
+  ranked: z.array(DiscoveredToolSchema),
+});
+export type RerankResponse = z.infer<typeof RerankResponseSchema>;
+
 export const ToolListItemSchema = z.object({
   slug: z.string(),
   name: z.string(),
