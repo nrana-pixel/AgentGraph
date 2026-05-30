@@ -9,6 +9,7 @@ import { runDailyDigest } from "./crons/dailyDigest.js";
 import { runWarehouseExport } from "./crons/warehouseExport.js";
 import { runMcpCatalogSync } from "./crons/mcpCatalogSync.js";
 import { runEmbeddingBackfill } from "./crons/embeddingBackfill.js";
+import { runToolQualityScan } from "./crons/toolQualityScan.js";
 
 const databaseUrl = process.env["DATABASE_URL"];
 const redisUrl = process.env["REDIS_URL"];
@@ -32,6 +33,22 @@ function scheduleEmbeddingBackfillCron(): void {
   setTimeout(() => {
     runEmbeddingBackfill(db).catch(console.error);
     setInterval(() => runEmbeddingBackfill(db).catch(console.error), 24 * 60 * 60 * 1000);
+  }, msUntilNext);
+}
+
+// Schedule daily tool-description quality scan at 00:30 UTC (before backfill)
+function scheduleToolQualityScanCron(): void {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(0, 30, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+
+  const msUntilNext = next.getTime() - now.getTime();
+  console.log(`[worker] tool quality scan scheduled in ${Math.round(msUntilNext / 60000)}m`);
+
+  setTimeout(() => {
+    runToolQualityScan(db).catch(console.error);
+    setInterval(() => runToolQualityScan(db).catch(console.error), 24 * 60 * 60 * 1000);
   }, msUntilNext);
 }
 
@@ -128,6 +145,7 @@ http.createServer((_, res) => {
 });
 
 console.log("[worker] starting background workers");
+scheduleToolQualityScanCron();
 scheduleEmbeddingBackfillCron();
 scheduleDailyCron();
 scheduleDailyDigestCron();

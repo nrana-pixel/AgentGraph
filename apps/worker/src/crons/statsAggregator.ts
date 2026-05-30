@@ -4,6 +4,8 @@ import {
   computeReliabilityScore,
   gradeBand,
 } from "../lib/reliabilityScore.js";
+import { detectRegressions, type ToolSnapshot } from "../lib/regressionDetect.js";
+import { deliverSignedWebhooks } from "../lib/signedWebhookDelivery.js";
 
 // Min-k anonymity threshold — a reliability score is only published once at
 // least this many distinct sharing orgs contribute, so a niche tool used by a
@@ -257,5 +259,153 @@ export async function runStatsAggregator(db: Drizzle): Promise<void> {
       distinct_orgs = EXCLUDED.distinct_orgs
   `);
 
+  // --- Regression "Downdetector" (spec 02) --------------------------------
+  await detectAndAlertRegressions(db, dateStr);
+
   console.log("[stats-aggregator] complete for", dateStr);
+}
+
+// Number of trailing days the regression baseline medians over (excludes today).
+const REGRESSION_WINDOW_DAYS = 7;
+// A definition_hash change within this many days of a regression ⇒ rug_pull.
+const RUG_PULL_WINDOW_DAYS = 7;
+
+interface RegressionCandidateRow {
+  tool_slug: string;
+  category: string;
+  distinct_orgs: number;
+  definition_changed: boolean;
+  cur_success_rate: number | null;
+  cur_p95_latency_ms: number | null;
+  cur_cost_per_call_usd: number | null;
+  cur_total_calls: number | null;
+  [key: string]: unknown;
+}
+
+interface HistoryRow {
+  tool_slug: string;
+  success_rate: number | null;
+  p95_latency_ms: number | null;
+  cost_per_call_usd: number | null;
+  total_calls: number | null;
+  [key: string]: unknown;
+}
+
+/**
+ * For every tool with enough cross-org coverage (min-k), diff the current daily
+ * snapshot against its trailing-7d medians via the pure detectRegressions
+ * helper. Each regression fires a signed `tool_regression` webhook to exactly
+ * the projects that called that tool (join tool_stats by tool_slug), with a
+ * `suggestedAlternative` = best same-category tool by reliabilityScore.
+ */
+async function detectAndAlertRegressions(db: Drizzle, dateStr: string): Promise<void> {
+  // Current snapshot + min-k gate + rug-pull signal (definition changed within
+  // RUG_PULL_WINDOW_DAYS, proxied by tools.updated_at moving forward).
+  const candidates = await db.execute<RegressionCandidateRow>(sql`
+    SELECT
+      h.tool_slug,
+      t.category,
+      h.distinct_orgs,
+      (t.updated_at >= (${dateStr}::date - INTERVAL '${sql.raw(String(RUG_PULL_WINDOW_DAYS))} days')) AS definition_changed,
+      h.success_rate::float8 AS cur_success_rate,
+      h.p95_latency_ms::float8 AS cur_p95_latency_ms,
+      h.cost_per_call_usd::float8 AS cur_cost_per_call_usd,
+      h.total_calls::int AS cur_total_calls
+    FROM tool_global_stats_history h
+    JOIN tools t ON t.slug = h.tool_slug
+    WHERE h.date = ${dateStr}::date
+      AND h.distinct_orgs >= ${MIN_K_DISTINCT_ORGS}
+  `);
+
+  if (candidates.length === 0) return;
+
+  // Trailing history (excluding today) for all candidate tools in one query.
+  const slugs = candidates.map((c) => c.tool_slug);
+  const history = await db.execute<HistoryRow>(sql`
+    SELECT tool_slug, success_rate::float8 AS success_rate,
+           p95_latency_ms::float8 AS p95_latency_ms,
+           cost_per_call_usd::float8 AS cost_per_call_usd,
+           total_calls::int AS total_calls
+    FROM tool_global_stats_history
+    WHERE tool_slug = ANY(${slugs})
+      AND date >= (${dateStr}::date - INTERVAL '${sql.raw(String(REGRESSION_WINDOW_DAYS))} days')
+      AND date < ${dateStr}::date
+  `);
+
+  const historyBySlug = new Map<string, ToolSnapshot[]>();
+  for (const h of history) {
+    const list = historyBySlug.get(h.tool_slug) ?? [];
+    list.push({
+      successRate: h.success_rate,
+      p95LatencyMs: h.p95_latency_ms,
+      costPerCallUsd: h.cost_per_call_usd,
+      totalCalls: h.total_calls,
+    });
+    historyBySlug.set(h.tool_slug, list);
+  }
+
+  for (const c of candidates) {
+    const regressions = detectRegressions(
+      {
+        successRate: c.cur_success_rate,
+        p95LatencyMs: c.cur_p95_latency_ms,
+        costPerCallUsd: c.cur_cost_per_call_usd,
+        totalCalls: c.cur_total_calls,
+      },
+      historyBySlug.get(c.tool_slug) ?? [],
+      { definitionChanged: c.definition_changed },
+    );
+    if (regressions.length === 0) continue;
+
+    const suggestedAlternative = await bestAlternative(db, c.tool_slug, c.category);
+
+    // Projects that actually called this tool — scope alerts to them only.
+    const affected = await db.execute<{ project_id: string }>(sql`
+      SELECT DISTINCT project_id FROM tool_stats WHERE tool_slug = ${c.tool_slug}
+    `);
+
+    for (const reg of regressions) {
+      const payload = {
+        event: "tool_regression",
+        toolSlug: c.tool_slug,
+        kind: reg.kind,
+        current: {
+          successRate: reg.current.successRate,
+          p95LatencyMs: reg.current.p95LatencyMs,
+        },
+        baseline: {
+          successRate: reg.baseline.successRate,
+          p95LatencyMs: reg.baseline.p95LatencyMs,
+        },
+        windowDays: REGRESSION_WINDOW_DAYS,
+        suggestedAlternative,
+        timestamp: new Date().toISOString(),
+      };
+
+      for (const { project_id } of affected) {
+        await deliverSignedWebhooks(db, project_id, "tool_regression", payload).catch((e) =>
+          console.error("[stats-aggregator] tool_regression webhook failed:", e),
+        );
+      }
+    }
+  }
+}
+
+/** Best same-category alternative tool by reliabilityScore, excluding the slug itself. */
+async function bestAlternative(
+  db: Drizzle,
+  toolSlug: string,
+  category: string,
+): Promise<string | null> {
+  const rows = await db.execute<{ slug: string }>(sql`
+    SELECT t.slug
+    FROM tools t
+    JOIN tool_global_stats tgs ON tgs.tool_slug = t.slug
+    WHERE t.category = ${category}
+      AND t.slug <> ${toolSlug}
+      AND tgs.reliability_score IS NOT NULL
+    ORDER BY tgs.reliability_score DESC
+    LIMIT 1
+  `);
+  return rows[0]?.slug ?? null;
 }

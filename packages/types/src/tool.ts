@@ -255,3 +255,39 @@ export const ToolListItemSchema = z.object({
   qualityIssues: z.array(z.string()).nullable(),
 });
 export type ToolListItem = z.infer<typeof ToolListItemSchema>;
+
+// GET /v1/tools/:slug/health response (spec 02 — the "Downdetector" surface).
+// status reflects whether the tool is currently regressing across the network;
+// sparkline is the trailing 30-day daily history from tool_global_stats_history.
+export const ToolHealthPointSchema = z.object({
+  date: z.string(),
+  successRate: z.number().nullable(),
+  p95LatencyMs: z.number().nullable(),
+  costPerCallUsd: z.number().nullable(),
+  totalCalls: z.number().nullable(),
+});
+export type ToolHealthPoint = z.infer<typeof ToolHealthPointSchema>;
+
+export const ToolHealthRegressionSchema = z.object({
+  kind: z.enum(["success_rate", "latency", "cost", "rug_pull"]),
+  current: z.object({
+    successRate: z.number().nullable(),
+    p95LatencyMs: z.number().nullable(),
+    costPerCallUsd: z.number().nullable(),
+  }),
+  baseline: z.object({
+    successRate: z.number().nullable(),
+    p95LatencyMs: z.number().nullable(),
+    costPerCallUsd: z.number().nullable(),
+  }),
+});
+export type ToolHealthRegression = z.infer<typeof ToolHealthRegressionSchema>;
+
+export const ToolHealthResponseSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  status: z.enum(["healthy", "degraded", "regressed"]),
+  lastRegression: ToolHealthRegressionSchema.nullable(),
+  sparkline: z.array(ToolHealthPointSchema),
+});
+export type ToolHealthResponse = z.infer<typeof ToolHealthResponseSchema>;

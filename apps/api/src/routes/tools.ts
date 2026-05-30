@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { eq } from "drizzle-orm";
+import { eq, and, gte, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { tools, toolGlobalStats } from "../db/schema.js";
+import { tools, toolGlobalStats, toolGlobalStatsHistory } from "../db/schema.js";
 import { apiKeyAuth, type AuthedRequest } from "../middleware/apiKeyAuth.js";
 import { clerkSessionAuth } from "../middleware/clerkSessionAuth.js";
 import { rateLimiter } from "../middleware/rateLimiter.js";
@@ -9,7 +9,12 @@ import {
   RecommendQuerySchema,
   PaginationSchema,
   type ToolReliabilityResponse,
+  type ToolHealthResponse,
 } from "@agentgraph/types";
+import {
+  detectRegressions,
+  type ToolSnapshot,
+} from "../lib/regressionDetect.js";
 import { getRecommendations } from "../services/recommendationEngine.js";
 import { redis, RECOMMEND_CACHE_PREFIX } from "../db/redis.js";
 
