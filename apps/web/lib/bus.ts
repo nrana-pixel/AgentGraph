@@ -3,13 +3,15 @@ import { useEffect } from "react";
 type Handler = (payload?: unknown) => void;
 const subs: Record<string, Handler[]> = {};
 
-export const bus = {
+const bus = {
   on(ev: string, fn: Handler) {
     (subs[ev] = subs[ev] ?? []).push(fn);
-    return () => { subs[ev] = (subs[ev] ?? []).filter(f => f !== fn); };
+    return () => {
+      subs[ev] = (subs[ev] ?? []).filter((f) => f !== fn);
+    };
   },
   emit(ev: string, payload?: unknown) {
-    (subs[ev] ?? []).forEach(fn => fn(payload));
+    (subs[ev] ?? []).forEach((fn) => fn(payload));
   },
 };
 
