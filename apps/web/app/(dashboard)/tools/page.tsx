@@ -46,7 +46,13 @@ export default function ToolsPage() {
     if (cat) list = list.filter(t => t.category === cat);
     if (pricing) list = list.filter(t => t.pricingModel === pricing);
     if (oss) list = list.filter(t => t.isOpenSource);
-    if (q) list = list.filter(t => ((t.name ?? "") + " " + (t.description ?? "") + " " + (t.tags ?? []).join(" ")).toLowerCase().includes(q.toLowerCase()));
+    if (q) {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter(t => {
+        const hay = ((t.name ?? "") + " " + (t.description ?? "") + " " + (t.tags ?? []).join(" ")).toLowerCase();
+        return words.every(w => hay.includes(w));
+      });
+    }
     list.sort((a, b) => {
       if (sortBy === "popularity") return parseFloat(b.popularityScore ?? "0") - parseFloat(a.popularityScore ?? "0");
       if (sortBy === "success") return parseFloat(b.successRate ?? "0") - parseFloat(a.successRate ?? "0");

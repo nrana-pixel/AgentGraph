@@ -31,5 +31,5 @@ export function useProject() {
     return () => { cancelled = true; };
   }, [getToken]);
 
-  return { project, token, loading };
+  return { project, token, loading, getToken };
 }

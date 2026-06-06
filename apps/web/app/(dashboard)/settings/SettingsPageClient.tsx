@@ -17,7 +17,7 @@ const ALL_EVENTS = ["cost_spike", "error_rate_threshold", "trace_completed"];
 
 export default function SettingsPageClient() {
   const router = useRouter();
-  const { project, token, loading: projectLoading } = useProject();
+  const { project, token, loading: projectLoading, getToken } = useProject();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [billing, setBilling] = useState<Billing | null>(null);
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
@@ -45,10 +45,12 @@ export default function SettingsPageClient() {
   }, [project, token]);
 
   const createKey = async () => {
-    if (!keyName.trim() || !project || !token) return;
+    if (!keyName.trim() || !project) return;
+    const t = await getToken();
+    if (!t) return;
     try {
       const data = await apiPost<{ id: string; keyPrefix: string; key: string; name: string | null; createdAt: string }>(
-        `/v1/projects/${project.id}/api-keys`, token, { name: keyName.trim() },
+        `/v1/projects/${project.id}/api-keys`, t, { name: keyName.trim() },
       );
       setCreatedKey(data.key);
       setKeys(prev => [{ id: data.id, name: data.name, keyPrefix: data.keyPrefix, lastUsedAt: null, createdAt: data.createdAt }, ...prev]);
@@ -57,9 +59,11 @@ export default function SettingsPageClient() {
   };
 
   const revokeKey = async (id: string) => {
-    if (!project || !token) return;
+    if (!project) return;
+    const t = await getToken();
+    if (!t) return;
     try {
-      await apiDelete(`/v1/projects/${project.id}/api-keys/${id}`, token);
+      await apiDelete(`/v1/projects/${project.id}/api-keys/${id}`, t);
       setKeys(prev => prev.filter(k => k.id !== id));
       toast("Key revoked");
     } catch { toast("Failed to revoke key"); }
@@ -68,12 +72,14 @@ export default function SettingsPageClient() {
   const copyKey = (raw: string) => { navigator.clipboard?.writeText?.(raw); toast("Copied to clipboard"); };
 
   const saveThreshold = async () => {
-    if (!project || !token) return;
+    if (!project) return;
     const value = Number(threshold);
     if (!Number.isFinite(value) || value <= 0) { toast("Enter a positive number"); return; }
+    const t = await getToken();
+    if (!t) return;
     try {
       const data = await apiPatch<{ costSpikeThresholdUsd: number }>(
-        `/v1/projects/${project.id}/settings`, token, { costSpikeThresholdUsd: value },
+        `/v1/projects/${project.id}/settings`, t, { costSpikeThresholdUsd: value },
       );
       setBilling(prev => prev ? { ...prev, costSpikeThresholdUsd: data.costSpikeThresholdUsd } : prev);
       setThreshold(String(data.costSpikeThresholdUsd));
@@ -85,9 +91,11 @@ export default function SettingsPageClient() {
     if (!newWh.url.trim() || !newWh.url.startsWith("https://")) {
       toast("URL must start with https://"); return;
     }
-    if (!project || !token) return;
+    if (!project) return;
+    const t = await getToken();
+    if (!t) return;
     try {
-      const data = await apiPost<Webhook>(`/v1/projects/${project.id}/webhooks`, token, { url: newWh.url.trim(), events: newWh.events });
+      const data = await apiPost<Webhook>(`/v1/projects/${project.id}/webhooks`, t, { url: newWh.url.trim(), events: newWh.events });
       setWebhooks(prev => [data, ...prev]);
       setNewWh({ url: "", events: ["cost_spike"] });
       toast("Webhook added");
@@ -95,19 +103,23 @@ export default function SettingsPageClient() {
   };
 
   const toggleWebhook = async (id: string) => {
-    if (!project || !token) return;
+    if (!project) return;
     const wh = webhooks.find(w => w.id === id);
     if (!wh) return;
+    const t = await getToken();
+    if (!t) return;
     try {
-      await apiPatch(`/v1/projects/${project.id}/webhooks/${id}`, token, { enabled: !wh.enabled });
+      await apiPatch(`/v1/projects/${project.id}/webhooks/${id}`, t, { enabled: !wh.enabled });
       setWebhooks(prev => prev.map(w => w.id === id ? { ...w, enabled: !w.enabled } : w));
     } catch { toast("Failed to update webhook"); }
   };
 
   const deleteWebhook = async (id: string) => {
-    if (!project || !token) return;
+    if (!project) return;
+    const t = await getToken();
+    if (!t) return;
     try {
-      await apiDelete(`/v1/projects/${project.id}/webhooks/${id}`, token);
+      await apiDelete(`/v1/projects/${project.id}/webhooks/${id}`, t);
       setWebhooks(prev => prev.filter(w => w.id !== id));
       toast("Webhook removed");
     } catch { toast("Failed to remove webhook"); }

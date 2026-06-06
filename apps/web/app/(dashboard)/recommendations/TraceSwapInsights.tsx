@@ -83,14 +83,16 @@ function ShadowResult({ r }: { r: ShadowReplayResponse }) {
   );
 }
 
-function SwapCard({ rec, token, projectId }: { rec: SwapRecommendation; token: string; projectId: string }) {
+function SwapCard({ rec, getToken, projectId }: { rec: SwapRecommendation; getToken: () => Promise<string | null>; projectId: string }) {
   const [replaying, setReplaying] = useState(false);
   const [shadow, setShadow] = useState<ShadowReplayResponse | null>(null);
   const toast = useToast();
 
-  const runReplay = () => {
+  const runReplay = async () => {
+    const t = await getToken();
+    if (!t) return;
     setReplaying(true);
-    apiPost<ShadowReplayResponse>(`/v1/projects/${projectId}/insights/shadow-replay`, token, {
+    apiPost<ShadowReplayResponse>(`/v1/projects/${projectId}/insights/shadow-replay`, t, {
       currentTool: rec.currentTool,
       candidateSlug: rec.suggestedTool,
       windowDays: 14,
@@ -148,16 +150,18 @@ function SwapCard({ rec, token, projectId }: { rec: SwapRecommendation; token: s
 }
 
 export default function TraceSwapInsights() {
-  const { project, token } = useProject();
+  const { project, getToken } = useProject();
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [recs, setRecs] = useState<SwapRecommendation[]>([]);
   const toast = useToast();
 
-  const load = () => {
-    if (!token || !project) return;
+  const load = async () => {
+    if (!project) return;
+    const t = await getToken();
+    if (!t) return;
     setLoading(true);
-    apiGet<SwapRecommendationsResponse>(`/v1/projects/${project.id}/insights/recommendations`, token)
+    apiGet<SwapRecommendationsResponse>(`/v1/projects/${project.id}/insights/recommendations`, t)
       .then((d) => {
         setRecs(d.recommendations);
         setLoaded(true);
@@ -195,8 +199,8 @@ export default function TraceSwapInsights() {
           </div>
         ) : (
           <div className="col" style={{ gap: 10 }}>
-            {token && project && recs.map((rec) => (
-              <SwapCard key={rec.currentTool + "→" + rec.suggestedTool} rec={rec} token={token} projectId={project.id} />
+            {project && recs.map((rec) => (
+              <SwapCard key={rec.currentTool + "→" + rec.suggestedTool} rec={rec} getToken={getToken} projectId={project.id} />
             ))}
           </div>
         )}

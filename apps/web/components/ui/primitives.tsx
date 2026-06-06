@@ -46,14 +46,15 @@ export function Sparkline({
   height?: number;
   fill?: boolean;
 }) {
-  if (!values || values.length === 0) return null;
-  const max = Math.max(...values);
-  const min = Math.min(...values);
+  const safe = values?.filter(Number.isFinite) ?? [];
+  if (safe.length === 0) return null;
+  const max = Math.max(...safe);
+  const min = Math.min(...safe);
   const range = max - min || 1;
   const w = 100,
     h = 100;
-  const pts = values.map((v, i) => {
-    const x = (i / (values.length - 1)) * w;
+  const pts = safe.map((v, i) => {
+    const x = safe.length > 1 ? (i / (safe.length - 1)) * w : w / 2;
     const y = h - ((v - min) / range) * h * 0.85 - 6;
     return [x, y] as [number, number];
   });

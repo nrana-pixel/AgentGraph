@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { useOrganization, CreateOrganization, useAuth } from "@clerk/nextjs";
+import { useState, useEffect } from "react";
+import { useOrganization, CreateOrganization, useAuth, useClerk } from "@clerk/nextjs";
 import { useProject } from "@/hooks/useProject";
 import { apiPost, ApiError } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
@@ -8,10 +8,20 @@ import { useToast } from "@/components/ui/toast";
 export function OnboardingGate({ children }: { children: React.ReactNode }) {
   const { organization, isLoaded: orgLoaded } = useOrganization();
   const { project, loading: projectLoading } = useProject();
-  const { getToken } = useAuth();
+  const { getToken, orgId } = useAuth();
+  const { setActive } = useClerk();
   const toast = useToast();
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // If the user has an organization but it isn't active in the session JWT yet,
+  // activate it. setActive triggers a Clerk session refresh (page reload), so
+  // the next mount will have orgId populated and project creation will succeed.
+  useEffect(() => {
+    if (orgLoaded && organization && !orgId) {
+      setActive({ organization: organization.id });
+    }
+  }, [orgLoaded, organization, orgId, setActive]);
 
   if (!orgLoaded || projectLoading) {
     return (

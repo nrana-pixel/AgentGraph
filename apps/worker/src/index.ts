@@ -136,7 +136,7 @@ function scheduleCatalogSyncCron(): void {
 }
 
 // Health check server so Render can run this as a Web Service
-const port = process.env["PORT"] ?? "3001";
+const port = process.env["WORKER_PORT"] ?? "3003";
 http
   .createServer((_, res) => {
     res.writeHead(200);
